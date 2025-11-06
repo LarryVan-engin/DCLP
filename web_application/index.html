@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">   
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+  <title>AI-Based Traffic Violation System</title>
+  <link rel="stylesheet" href="static/style.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/konva@9/konva.min.js"></script>
+</head>
+<body>
+  <div class="title-bar">
+    <h1>AI-Based Traffic Violation System</h1>
+  </div>
+
+  <div class="container">
+        <div class="video-section">
+      <img id="video-stream" src="/stream" alt="Video Stream" />
+      <div id="canvas-container"></div>
+    </div>
+
+        <div class="right-panel">
+            <div class="tracking-panel">
+        <h3>THEO DÕI PHƯƠNG TIỆN</h3>
+        <div id="vehicle-list">
+            </div>
+      </div>
+
+            <div class="violation-panel">
+        <h3>VI PHẠM</h3>
+        <div id="violation-list">
+            </div>
+      </div>
+    </div>
+  </div>
+
+   <div class="control-bar">
+    <div class="traffic-light">
+      <div class="light-container">
+        <span>Trái:</span>
+        <span id="light-left" class="light red"></span>
+    </div>
+    <div class="light-container">
+        <span>Thẳng:</span>
+        <span id="light-straight" class="light green"></span>
+    </div>
+    </div>
+    <div class="stats">
+      <span>🏍️ Xe máy: <b id="count-motorcycle">0</b></span>
+      <span>🚗 Ô tô: <b id="count-car">0</b></span>
+      <span>🚚 Xe tải: <b id="count-truck">0</b></span>
+      <span>🚌 Xe buýt: <b id="count-bus">0</b></span>
+    </div>
+
+    <div class="control-options">
+      <div class="switch-container">
+        <span class="switch-label-text">Phạt dựa trên đèn</span> <label class="switch">
+            <input type="checkbox" id="traffic-switch" checked>
+            <span class="slider-ground"></span>
+        </label>
+    </div>
+    
+      <div class="upload-container">
+        <form id="upload-form">
+          <label for="video-file" class="file-label">Chọn video:</label>
+            <input type="file" id="video-file" accept="video/*" required>
+            <button type="submit" class="upload-btn">Upload</button>
+            </form>
+      </div>
+    </div>
+
+    <button id="pause-btn" class="control-btn" onclick="togglePause()">
+      <i class="fas fa-play"></i>
+      <span class="btn-text">Tạm dừng</span>
+    </button>
+
+    <button onclick="exportViolations()">Export CSV</button>
+  </div>
+
+   <div class="tools">
+    <button onclick="setMode('line')">Vẽ Line (Vượt đèn đỏ)</button>
+    <button onclick="setMode('polygon')">Vẽ Vùng cấm</button>
+    <button onclick="clearDraw()">Xóa vùng</button>
+
+  </div>
+
+
+  <script src="\static\app.js"></script>
+</body>
+</html>

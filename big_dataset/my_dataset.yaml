@@ -1,0 +1,19 @@
+# YOLO dataset configuration
+# Multi-dataset training: license plates, vehicles, people
+
+# Root path (not mandatory but useful for relative paths)
+path: D:/VSCode/DCLP/big_dataset/LP_detection
+# Training and validation data (can include multiple datasets)
+train: images/train
+
+val: images/val
+
+# Classes
+names:
+ 0: car
+ 1: threewheel
+ 2: bus
+ 3: truck
+ 4: motorbike
+ 5: van
+ 6: bien_so

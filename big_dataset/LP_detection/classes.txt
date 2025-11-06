@@ -1,0 +1,12 @@
+car
+threewheel
+bus
+truck
+motorbike
+van
+bien_so
+
+
+den_xanh
+den_do
+den_vang

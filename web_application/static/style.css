@@ -1,0 +1,490 @@
+/* --- Global Reset and Base Style --- */
+:root {
+    --color-primary: #007bff;
+    --color-accent: #4CAF50; /* Xanh lá cây */
+    --color-background-dark: #1e1e2d; /* Nền tối hơn */
+    --color-panel-dark: #2a2a3e; /* Panel tối */
+    --color-text-light: #ececec;
+    --color-red: #ff5252;
+    --color-shadow: rgba(0, 0, 0, 0.4);
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: var(--color-background-dark);
+    color: var(--color-text-light);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* --- Title Bar --- */
+.title-bar {
+    background: var(--color-primary);
+    color: white;
+    padding: 3px 8px;
+    text-align: center;
+    font-size: 1em;
+    font-weight: 500;
+    box-shadow: 0 2px 10px var(--color-shadow);
+}
+
+/* --- Main Container (Responsive Flex) --- */
+.container {
+    display: flex;
+    flex-grow: 1; /* Cho phép co giãn */
+    gap: 10px;
+    padding: 8px;
+    /* Chiều cao tính toán linh hoạt */
+    overflow: hidden;
+}
+
+/* --- Video Section --- */
+.video-section {
+    position: relative;
+    flex: 2.5; /* Chiếm khoảng 60% */
+    min-width: 550px; /* Chiều rộng tối thiểu trên desktop */
+    background: #000;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 0 20px rgba(76, 175, 80, 0.2); /* Shadow xanh lá cây mờ */
+    width: 100%;
+    height: 100%;
+    aspect-ratio: 16/9;
+}
+
+#video-stream { 
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
+#canvas-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+/* --- Right Panel --- */
+.right-panel {
+    flex: 1; /* Chiếm khoảng 30-35% */
+    min-width: 350px; /* Chiều rộng tối thiểu cho panel */
+    min-height: 500px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    overflow: hidden;
+}
+
+/* --- Tracking & Violation Panels --- */
+.tracking-panel, .violation-panel {
+    background: var(--color-panel-dark);
+    padding: 5px;
+    border-radius: 8px;
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    min-height: 0;
+    flex-direction: column;
+    box-shadow: 0 4px 10px var(--color-shadow);
+    border: 1px solid #3c3c55; /* Đường viền nhẹ */
+}
+
+.tracking-panel h3, .violation-panel h3 {
+    flex-shrink: 0;
+    color: var(--color-accent);
+    margin-top: 0;
+    margin-bottom: 1px;
+    font-size: 1.2em;
+    border-bottom: 2px solid #3c3c55;
+    padding-bottom: 0px;
+    padding-top: 0;
+}
+
+#vehicle-list, #violation-list {
+    flex-grow: 1;
+    overflow-y: auto;
+    padding-right: 5px; /* Cho thanh cuộn */
+    min-height: 0;
+}
+
+.light-container {
+  display: flex; align-items: center; gap: 5px; font-size: 0.9em;
+}
+.light.red { background: #f44336; box-shadow: 0 0 10px #f44336; }
+.light.yellow { background: #ffeb3b; box-shadow: 0 0 10px #ffeb3b; }
+.light.green { background: #4CAF50; box-shadow: 0 0 10px #4CAF50; }
+
+
+
+/* Scrollbar Style (Đẹp hơn cho Dark Theme) */
+#vehicle-list::-webkit-scrollbar, #violation-list::-webkit-scrollbar {
+    width: 8px;
+}
+#vehicle-list::-webkit-scrollbar-thumb, #violation-list::-webkit-scrollbar-thumb {
+    background-color: #555;
+    border-radius: 10px;
+}
+#vehicle-list::-webkit-scrollbar-track, #violation-list::-webkit-scrollbar-track {
+    background: #333;
+}
+
+/* --- List Items (Dynamic) --- */
+.vehicle-item, .violation-item {
+    background: #33334c; /* Tối hơn nền panel */
+    margin-bottom: 8px;
+    padding: 10px;
+    border-radius: 8px;
+    display: flex;
+    gap: 15px;
+    align-items: center;
+    border-left: 5px solid transparent;
+    transition: background 0.3s, transform 0.2s;
+}
+
+.vehicle-item:hover, .violation-item:hover {
+    background: #3a3a5a;
+    transform: scale(1.01);
+}
+
+.vehicle-item { border-left-color: var(--color-accent); } /* Xanh lá */
+.violation-item { 
+    border-left-color: var(--color-red); /* Đỏ nổi bật */
+    animation: pulse-light 1.5s infinite;
+}
+
+@keyframes pulse-light {
+    0%, 100% { box-shadow: 0 0 0 var(--color-red); }
+    50% { box-shadow: 0 0 5px var(--color-red); }
+}
+
+.vehicle-img, .violation-img {
+    width: 60px; /* Kích thước nhỏ gọn hơn */
+    height: 40px;
+    object-fit: cover;
+    border-radius: 4px;
+    border: 1px solid #555;
+}
+
+.vehicle-info, .violation-info {
+    flex: 1;
+    font-size: 0.9em;
+    line-height: 1.4;
+}
+.vehicle-info b, .violation-info b {
+    color: #00bcd4; /* Màu xanh Cyan làm nổi bật dữ liệu */
+    font-weight: 600;
+}
+
+/* --- Control Bar --- */
+.control-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 15px;
+    background: var(--color-panel-dark);
+    border-top: 1px solid #444;
+    box-shadow: 0 -2px 10px var(--color-shadow);
+    margin: 10px; 
+    border-radius: 12px;
+    flex-shrink: 0;
+}
+
+.control-options {
+    display: flex; /* Bố cục ngang cho switch và upload */
+    align-items: center;
+    gap: 20px;
+}
+
+
+.traffic-light .light {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    margin: 0 5px;
+    opacity: 0.3;
+    transition: opacity 0.3s;
+}
+
+.light.active { opacity: 1; }
+
+.red.active { 
+    background: var(--color-red); 
+    box-shadow: 0 0 10px var(--color-red); 
+}
+.green.active { 
+    background: var(--color-accent); 
+    box-shadow: 0 0 10px var(--color-accent); 
+}
+
+/* Switch CSS */
+.switch-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+
+.switch-label-text {
+    /* Style cho text label */
+    font-size: 0.9em;
+    white-space: nowrap; /* Đảm bảo text không bị xuống dòng */
+}
+
+
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 60px;
+    height: 34px;
+    margin: 0;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+}
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 26px;
+    width: 26px;
+    left: 4px;
+    bottom: 4px;
+    background-color: white;
+    transition: .4s;
+}
+input:checked + .slider {
+    background-color: #2196F3; /* Màu xanh khi bật */
+}
+input:checked + .slider:before {
+    transform: translateX(26px);
+}
+.slider-ground { /* Đã đổi tên từ .slider */
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #555; /* Màu nền đẹp hơn */
+    transition: .4s;
+    border-radius: 34px; /* Làm tròn */
+}
+
+
+.slider-ground:before {
+    position: absolute;
+    content: "";
+    height: 26px;
+    width: 26px;
+    left: 4px;
+    bottom: 4px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%; /* Làm tròn */
+}
+
+input:checked + .slider-ground {
+    background-color: var(--color-accent); /* Màu xanh lá khi bật */
+}
+input:checked + .slider-ground:before {
+    transform: translateX(26px);
+}
+
+.stats { color: var(--color-text-light); }
+.stats span { margin: 0 10px; font-size: 0.9em; }
+.stats b { color: #FFD700; /* Màu vàng Gold cho số liệu */ }
+
+.control-bar button {
+    padding: 8px 15px;
+    background: var(--color-primary);
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background 0.2s, transform 0.1s;
+}
+.control-bar button:hover { 
+    background: #0056b3; 
+    transform: translateY(-1px);
+}
+
+.control-btn {
+    padding: 8px 15px;
+    background: #ff9800;               /* màu cam */
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background .2s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.control-btn:hover { background: #e68900; }
+
+.control-btn i {
+    font-size: 1.1em;
+    transition: transform 0.2s;
+}
+.control-btn.paused i {
+    transform: scale(0.9);
+}
+
+.control-btn .btn-text {
+    font-size: 0.9em;
+}
+
+/* --- Drawing Tools (Draggable) --- */
+.tools {
+    /* Đã tối ưu cho Javascript Draggable */
+    position: absolute; 
+    top: 80px; 
+    left: 20px; 
+    z-index: 1000;
+    
+    display: flex;
+    gap: 10px;
+    
+    background: #000000e0; /* Nền đen mờ */
+    padding: 10px 15px;
+    border-radius: 25px;
+    box-shadow: 0 4px 15px var(--color-shadow);
+    
+    cursor: grab; 
+    -webkit-user-select: none; /* FIX: Tương thích Safari/iOS */
+    user-select: none; 
+    touch-action: none;
+}
+
+.tools:active { 
+    cursor: grabbing;
+    z-index: 1001;
+}
+
+.tools button {
+    padding: 8px 15px;
+    background: #17a2b8; /* Xanh Teal nổi bật */
+    color: white;
+    border: none;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: background 0.2s;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.tools button:hover { background: #138496; }
+
+.upload-container form {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.file-label {
+    background: #555;
+    padding: 6px 12px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: background 0.2s;
+}
+.file-label:hover {
+    background: #666;
+}
+
+#video-file {
+    display: none; /* Ẩn input file mặc định */
+}
+
+.upload-btn {
+    padding: 6px 12px;
+    background: #dc3545; /* Đỏ nổi bật hơn cho hành động */
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.2s;
+    font-weight: normal;
+}
+.upload-btn:hover {
+    background: #c82333;
+}
+
+/* --- Responsive Adaption (Thích nghi) --- */
+@media (max-width: 1200px) {
+    .video-section {
+        min-width: unset;
+    }
+}
+
+@media (max-width: 992px) {
+    .container {
+        flex-direction: column; /* Chuyển sang bố cục dọc */
+        height: auto;
+    }
+
+    .video-section, .right-panel {
+        width: 100%;
+        min-width: unset;
+        flex: none;
+    }
+
+    .control-bar {
+        flex-wrap: wrap;
+        justify-content: center;
+        margin: 10px 15px;
+    }
+    
+    .traffic-light, .stats {
+        margin-bottom: 10px;
+    }
+}
+
+@media (max-width: 576px) {
+    .title-bar h1 { font-size: 1.4em; }
+    .vehicle-item, .violation-item { gap: 10px; padding: 8px; }
+    .vehicle-img, .violation-img { width: 40px; height: 30px; }
+    .stats { flex-wrap: wrap; justify-content: center; }
+    .tools {
+        position: fixed; /* Chuyển sang fixed trên mobile */
+        left: 50%;
+        bottom: 10px;
+        top: unset;
+        transform: translateX(-50%);
+        width: 95%;
+        flex-wrap: wrap;
+        justify-content: center;
+        cursor: default;
+    }
+}
