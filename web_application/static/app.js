@@ -54,24 +54,135 @@ function initCanvas() {
 function attachDrawingEvents() {
   if (!stage || !layer) return;
 
-  let currentShape;
-  stage.on('mousedown touchstart', (e) => {
+
+  let currentShape = null; // Shape at present
+  let isDrawing = false;  // Flag to track drawing state
+  let currentMode = null; // Save mode at start of drawing
+  
+  const resetCurrent = () => {
+    currentShape = null;
+    isDrawing = false;
+    currentMode = null;
+  }
+
+  // Clear old events to avoid duplication
+  stage.off('mousedown touchstart');
+  stage.off('mousemove touchmove');
+  stage.off('doubleclick doubletap');
+
+
+  stage.on('mousedown touchstart', () => {
     if (!mode) return;
     const pos = stage.getPointerPosition();
-    const points = [pos.x, pos.y];
-    currentShape = mode === 'line'
-      ? new Konva.Line({ points, stroke: 'red', strokeWidth: 4 })
-      : new Konva.Line({ points, stroke: 'yellow', strokeWidth: 3, closed: false });
-    layer.add(currentShape);
-  });
+    if (!pos) return;
 
-  stage.on('mousemove touchmove', () => {
+    // First click: create new shape
+    if (!isDrawing) {
+      isDrawing = true;
+      currentMode = mode;
+
+      if (currentMode === 'line') {
+        // Line: 2 points (x1, y1, x2, y2) - 2nd point on mouseup
+        currentShape = new Konva.Line({
+          points: [pos.x, pos.y, pos.x, pos.y],
+          stroke: 'red',
+          strokeWidth: 4,
+        });
+      } else if (currentMode === 'polygon') {
+        // Polygon: multiple points, add points on mousemove
+        currentShape = new Konva.Line({
+          points: [pos.x, pos.y, pos.x, pos.y],
+          stroke: 'yellow',
+          strokeWidth: 3,
+          closed: false,
+        });
+      }
+
+      layer.add(currentShape);
+      layer.draw();
+      return;
+    }
+
+    // Be drawing
     if (!currentShape) return;
+
+    if (currentMode === 'line') {
+      // 2nd click for line: finish drawing
+      const pts = currentShape.points();
+      pts[2] = pos.x;
+      pts[3] = pos.y;
+      currentShape.points(pts);
+
+      // Save line zone
+      zones.lines.push([[pts[0], pts[1]], [pts[2], pts[3]]]);
+      sendZones();
+      resetCurrent();
+    } else if (currentMode === 'polygon') {
+      // Add point for polygon
+      const pts = currentShape.points();
+
+      // Fix preview present point to real point
+      pts[pts.length - 2] = pos.x;
+      pts[pts.length - 1] = pos.y;
+
+      // Add new preview point
+      currentShape.points(pts.concat([pos.x, pos.y]));
+      layer.draw();
+    }
+  });
+  
+  // MOUSE MOVE: update preview point
+  stage.on('mousemove touchmove', () => {
+    if (!isDrawing || !currentShape) return;
     const pos = stage.getPointerPosition();
+    if (!pos) return;
+
     const pts = currentShape.points();
-    currentShape.points(pts.concat([pos.x, pos.y]));
+    // Update last point to current mouse position
+    pts[pts.length - 2] = pos.x;
+    pts[pts.length - 1] = pos.y;
+    currentShape.points(pts);
+    layer.batchDraw();
   });
 
+  // DOUBLE CLICK: finish polygon
+  const finishPolygon = () => {
+    if (!isDrawing || currentMode !== 'polygon' || !currentShape) return;
+    const pts = currentShape.points();
+
+    // Need at least 3 points to close polygon (6 coords x,y) + 2 previews
+    if (pts.length < 8) {
+
+      // Polygon too few points, cancel drawing
+      currentShape.destroy();
+      resetCurrent();
+      layer.draw();
+      return;
+    }
+
+    // Reject 2 last preview points
+    const cleanPts = pts.slice(0, - 2);
+
+    // Set closed and fill
+    currentShape.points(cleanPts);
+    currentShape.closed(true);
+    currentShape.fill('rgba(255,255,0,0.3)');
+    layer.draw();
+
+    // Convert points to array of [x,y]
+    const poly = [];
+    for (let i = 0; i < cleanPts.length; i += 2) {
+      poly.push([cleanPts[i], cleanPts[i + 1]]);
+    }
+
+    zones.polygons.push(poly);
+    sendZones();
+    resetCurrent();
+  };
+
+  stage.on('doubleclick doubletap', finishPolygon);
+
+  // MOUSE UP: finish line
   stage.on('mouseup touchend', () => {
     if (!currentShape) return;
     if (mode === 'polygon') {
@@ -91,13 +202,13 @@ function attachDrawingEvents() {
 // ==============================
 function setMode(m) { mode = m; }
 function clearDraw() {
-  if (layer) {
-    layer.destroyChildren();
-    zones.lines = [];
-    zones.polygons = [];
-    sendZones();
-  }
+  if (!layer) return;
+  layer.destroyChildren();
+  zones.lines = [];
+  zones.polygons = [];
+  sendZones();
 }
+
 function sendZones() {
   fetch('/api/zones', {
     method: 'POST',
