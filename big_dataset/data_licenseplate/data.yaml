@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 1
+names: ['License_Plate']
+
+roboflow:
+  workspace: final-year-a0upc
+  project: license-plate-mcngq
+  version: 3
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/final-year-a0upc/license-plate-mcngq/dataset/3
