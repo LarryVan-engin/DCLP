@@ -36,8 +36,8 @@ from PIL import Image
 # Constants and Configuration
 #######################################################################################################################
 # Configuration constants
-YOLO_PATH = r"./runs/detect/traffic_light/weights/best.pt"
-TEST_IMAGE = "D:\VSCode\DCLP/big_dataset/test\light.png"
+YOLO_PATH = r"D:\VSCode\DCLP\main_code\runs\detect\model_detect_license_plate.pt"
+TEST_IMAGE = r"D:\VSCode\DCLP\big_dataset\test\xelam.png"
 SAVE_PATH = "D:\VSCode\DCLP\main_code/result/vehicle_detect"
 
 
@@ -55,8 +55,8 @@ def main_function():
         im_array = r.plot()
         im = Image.fromarray(im_array[..., ::-1]) #RGB PIL image
         im.show()
-        #save_path = os.path.join(SAVE_PATH, 'result.jpg')
-        #im.save(save_path)
+        save_path = os.path.join(SAVE_PATH, 'result.jpg')
+        im.save(save_path)
 
 
 #######################################################################################################################

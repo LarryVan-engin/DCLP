@@ -1,476 +1,358 @@
 // ==============================
-// 1) STATE
+// 1) GLOBAL STATE
 // ==============================
-let stage, layer, mode = null;
-const zones = { lines: [], polygons: [] };
+let stage, layer;
+let mode = null; // 'line', 'polygon', 'light_zone'
+let isDrawing = false;
+let currentShape = null;
 
+// Cấu trúc dữ liệu mới: Lưu cả tọa độ và hướng (label)
+// zones = { 
+//    lines: [ {points:[], label:'left'}, ... ], 
+//    polygons: [], 
+//    light_zones: [ {points:[], label:'straight'} ] 
+// }
+let zones = { lines: [], polygons: [], light_zones: [] };
 let vehicles = {};
 let violations = [];
 let isPaused = false;
-
-// ==============================
-// 2) WEBSOCKET (auto reconnect + ws/wss)
-// ==============================
 let ws = null;
-let wsRetry = 0;
-let wsRetryTimer = null;
 
-function setWsStatus(text) {
-  const el = document.getElementById('ws-status');
-  if (el) el.textContent = text;
-}
-
-function wsUrl() {
-  const proto = (location.protocol === 'https:') ? 'wss' : 'ws';
-  return `${proto}://${location.host}/ws`;
-}
-
+// ==============================
+// 2) WEBSOCKET
+// ==============================
 function connectWS() {
-  if (ws) {
-    try { ws.close(); } catch {}
-    ws = null;
-  }
-  if (wsRetryTimer) {
-    clearTimeout(wsRetryTimer);
-    wsRetryTimer = null;
-  }
+    const proto = (location.protocol === 'https:') ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws.onmessage = (e) => {
+        try {
+            const data = JSON.parse(e.data);
+            updateTrackingPanel(data.vehicles);
+            updateViolationPanel(data.violations);
+            updateStats(data.stats);
+            updateLights(data.lights);
+            updateFPS(data.fps);
 
-  setWsStatus('connecting');
-  ws = new WebSocket(wsUrl());
-
-  ws.onopen = () => {
-    wsRetry = 0;
-    setWsStatus('connected');
-  };
-
-  ws.onclose = () => {
-    setWsStatus('disconnected');
-    const backoff = Math.min(3000, 300 * (2 ** wsRetry));
-    wsRetry = Math.min(wsRetry + 1, 5);
-    wsRetryTimer = setTimeout(connectWS, backoff);
-  };
-
-  ws.onerror = () => {
-    setWsStatus('error');
-  };
-
-  ws.onmessage = (e) => {
-    let data;
-    try { data = JSON.parse(e.data); } catch { return; }
-
-    // Nếu đã nhận data thì chắc chắn là connected
-    setWsStatus('connected');
-
-    updateTrackingPanel(data.vehicles);
-    updateViolationPanel(data.violations);
-    updateStats(data.stats);
-    updateTrafficLights(data.lights);
-    updateFPS(data.fps);
-  };
-
+            if (data.is_paused !== undefined) {
+                syncPauseButton(data.is_paused);
+            }
+        } catch(err) {}
+    };
+    ws.onclose = () => setTimeout(connectWS, 2000);
 }
 
 // ==============================
-// 3) CANVAS INIT
+// 3) DRAWING LOGIC (CORE)
 // ==============================
 function initCanvas() {
-  const img = document.getElementById('video-stream');
-
-  stage = new Konva.Stage({
-    container: 'canvas-container',
-    width: img.clientWidth || 800,
-    height: img.clientHeight || 450
-  });
-
-  layer = new Konva.Layer();
-  stage.add(layer);
-
-  const updateSize = () => {
-    const width = img.clientWidth;
-    const height = img.clientHeight;
-    if (width > 0 && height > 0) {
-      stage.width(width);
-      stage.height(height);
-      stage.scale({ x: 1, y: 1 });
-      layer.draw();
-    }
-  };
-
-  img.onload = updateSize;
-  new ResizeObserver(updateSize).observe(img);
-  updateSize();
+    const img = document.getElementById('video-stream');
+    stage = new Konva.Stage({ container: 'canvas-container', width: 800, height: 450 });
+    layer = new Konva.Layer();
+    stage.add(layer);
+    
+    const resize = () => {
+        if(img.clientWidth > 0) {
+            stage.width(img.clientWidth);
+            stage.height(img.clientHeight);
+        }
+    };
+    new ResizeObserver(resize).observe(img);
+    img.onload = resize;
 }
 
-// ==============================
-// 4) DRAWING (clean, no double-submit)
-// - line: click 2 điểm để chốt
-// - polygon: click để thêm điểm, double click để chốt
-// ==============================
 function attachDrawingEvents() {
-  if (!stage || !layer) return;
+    stage.off('mousedown touchstart mousemove touchmove contextmenu');
 
-  let currentShape = null;
-  let isDrawing = false;
-  let currentMode = null;
+    stage.on('mousedown touchstart', (e) => {
+        if (e.evt.button === 2 && isDrawing) { finishDrawing(); return; }
+        if (!mode) return;
 
-  const resetCurrent = () => {
-    currentShape = null;
+        const pos = stage.getPointerPosition();
+        if (!isDrawing) {
+            isDrawing = true;
+            let color = (mode === 'line') ? 'red' : ((mode === 'light_zone') ? '#00ffea' : 'yellow');
+            
+            // Vẽ Line hoặc Polygon
+            currentShape = new Konva.Line({
+                points: [pos.x, pos.y, pos.x, pos.y],
+                stroke: color, strokeWidth: (mode === 'line') ? 4 : 2,
+                closed: false, 
+                fill: (mode !== 'line') ? color.replace(')', ',0.2)').replace('rgb', 'rgba') : null
+            });
+            if(mode !== 'line') currentShape.fill(`${color}33`); // Hack màu fill
+            layer.add(currentShape);
+        } else {
+            const pts = currentShape.points();
+            if (mode === 'line') {
+                // Line: Điểm đầu -> Điểm cuối (XONG LUÔN)
+                const label = document.getElementById('direction-select').value;
+                const scale = getScaleFactor(); // Lấy tỷ lệ scale hiện tại
+                
+                // Quy đổi toạ độ màn hình -> toạ độ video thực
+                const start = [pts[0] * scale.x, pts[1] * scale.y];
+                const end = [pos.x * scale.x, pos.y * scale.y];
+
+                zones.lines.push({ points: [start, end], label: label });
+                
+                // Gửi dữ liệu đi
+                sendZones();
+                
+                // QUAN TRỌNG: Hủy hình vẽ trên client để tránh bị 2 hình đè lên nhau
+                currentShape.destroy(); 
+                isDrawing = false;
+                currentShape = null;
+            } else {
+                currentShape.points([...pts, pos.x, pos.y]);
+            }
+        }
+        layer.draw();
+    });
+
+    stage.on('mousemove touchmove', () => {
+        if (!isDrawing || !currentShape) return;
+        const pos = stage.getPointerPosition();
+        const pts = currentShape.points();
+        pts[pts.length-2] = pos.x;
+        pts[pts.length-1] = pos.y;
+        currentShape.points(pts);
+        layer.batchDraw();
+    });
+
+    stage.on('contextmenu', (e) => e.evt.preventDefault());
+}
+
+function finishDrawing() {
+    if (!currentShape || !isDrawing) return;
+    const pts = currentShape.points();
+    const cleanPts = pts.slice(0, -2); // Bỏ điểm thừa theo chuột
+
+    if (cleanPts.length >= 6) { // Ít nhất 3 điểm
+        const scale = getScaleFactor();
+        const label = document.getElementById('direction-select').value;
+        
+        // Quy đổi toàn bộ điểm sang toạ độ thực
+        const realPoly = [];
+        for(let i=0; i<cleanPts.length; i+=2) {
+            realPoly.push([ cleanPts[i] * scale.x, cleanPts[i+1] * scale.y ]);
+        }
+
+        if (mode === 'light_zone') zones.light_zones.push({ points: realPoly, label: label });
+        else if (mode === 'polygon') zones.polygons.push(realPoly);
+        
+        sendZones();
+    }
+    
+    // Xóa hình vẽ tạm trên client -> Video stream sẽ hiển thị hình đã vẽ từ server
+    currentShape.destroy(); 
     isDrawing = false;
-    currentMode = null;
-  };
-
-  stage.off('mousedown touchstart');
-  stage.off('mousemove touchmove');
-  stage.off('doubleclick doubletap');
-
-  stage.on('mousedown touchstart', () => {
-    if (!mode) return;
-    const pos = stage.getPointerPosition();
-    if (!pos) return;
-
-    // start
-    if (!isDrawing) {
-      isDrawing = true;
-      currentMode = mode;
-
-      if (currentMode === 'line') {
-        currentShape = new Konva.Line({
-          points: [pos.x, pos.y, pos.x, pos.y],
-          stroke: 'red',
-          strokeWidth: 4
-        });
-      } else if (currentMode === 'polygon') {
-        currentShape = new Konva.Line({
-          points: [pos.x, pos.y, pos.x, pos.y],
-          stroke: 'yellow',
-          strokeWidth: 3,
-          closed: false
-        });
-      }
-
-      layer.add(currentShape);
-      layer.draw();
-      return;
-    }
-
-    // continue
-    if (!currentShape) return;
-
-    if (currentMode === 'line') {
-      // click thứ 2 -> chốt line
-      const pts = currentShape.points();
-      pts[2] = pos.x;
-      pts[3] = pos.y;
-      currentShape.points(pts);
-      layer.draw();
-
-      zones.lines.push([[pts[0], pts[1]], [pts[2], pts[3]]]);
-      sendZones();
-      resetCurrent();
-      return;
-    }
-
-    if (currentMode === 'polygon') {
-      // click -> thêm điểm, giữ 1 điểm preview cuối
-      const pts = currentShape.points();
-      pts[pts.length - 2] = pos.x;
-      pts[pts.length - 1] = pos.y;
-      currentShape.points(pts.concat([pos.x, pos.y]));
-      layer.draw();
-    }
-  });
-
-  stage.on('mousemove touchmove', () => {
-    if (!isDrawing || !currentShape) return;
-    const pos = stage.getPointerPosition();
-    if (!pos) return;
-
-    const pts = currentShape.points();
-    pts[pts.length - 2] = pos.x;
-    pts[pts.length - 1] = pos.y;
-    currentShape.points(pts);
-    layer.batchDraw();
-  });
-
-  const finishPolygon = () => {
-    if (!isDrawing || currentMode !== 'polygon' || !currentShape) return;
-
-    const pts = currentShape.points();
-    if (pts.length < 8) {
-      // < 3 điểm thật -> hủy
-      currentShape.destroy();
-      layer.draw();
-      resetCurrent();
-      return;
-    }
-
-    const cleanPts = pts.slice(0, -2); // bỏ preview
-    currentShape.points(cleanPts);
-    currentShape.closed(true);
-    currentShape.fill('rgba(255,255,0,0.3)');
+    currentShape = null;
     layer.draw();
+}
 
-    const poly = [];
-    for (let i = 0; i < cleanPts.length; i += 2) {
-      poly.push([cleanPts[i], cleanPts[i + 1]]);
+function addLabelText(x, y, text) {
+    const txt = new Konva.Text({
+        x: x, y: y - 15,
+        text: text.toUpperCase(),
+        fontSize: 12, fill: 'white',
+        shadowColor: 'black', shadowBlur: 2
+    });
+    layer.add(txt);
+}
+
+window.toggleTrafficMode = function() {
+    const isChecked = document.getElementById('traffic-switch').checked;
+    fetch('/api/set_option', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({use_traffic_light: isChecked})
+    });
+};
+
+function syncPauseButton(serverPausedState) {
+    // Chỉ cập nhật nếu trạng thái local khác trạng thái server
+    if (isPaused !== serverPausedState) {
+        isPaused = serverPausedState;
+        const btn = document.getElementById('pause-btn');
+        if (isPaused) {
+            btn.innerHTML = '<i class="fas fa-play"></i> Tiếp tục';
+            btn.style.backgroundColor = '#f59e0b';
+            btn.style.color = '#000';
+        } else {
+            btn.innerHTML = "<i class='fas fa-pause'></i> Tạm dừng";
+            btn.style.backgroundColor = '';
+            btn.style.color = '';
+        }
     }
-
-    zones.polygons.push(poly);
-    sendZones();
-    resetCurrent();
-  };
-
-  stage.on('doubleclick doubletap', finishPolygon);
 }
 
 // ==============================
-// 5) HELPERS
+// 4) HELPER FUNCTIONS
 // ==============================
-function setMode(m) { mode = m; }
+function setMode(m) {
+    mode = m;
+    isDrawing = false;
+    currentShape = null;
+    attachDrawingEvents();
+    document.getElementById('canvas-container').style.cursor = 'crosshair';
+    console.log("Mode:", m);
+}
 
 function clearDraw() {
-  if (!layer) return;
-  layer.destroyChildren();
-  zones.lines = [];
-  zones.polygons = [];
-  layer.draw();
-  sendZones();
+    if(layer) layer.destroyChildren(); 
+    layer.draw();
+    zones = { lines: [], polygons: [], light_zones: [] };
+    sendZones();
 }
 
 function sendZones() {
-  fetch('/api/zones', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(zones)
-  }).catch(() => {});
+    fetch('/api/zones', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(zones)
+    });
 }
 
-function togglePause() {
-  isPaused = !isPaused;
+// ==============================
+// 5) UI HELPERS
+// ==============================
+window.togglePause = function() {
+    isPaused = !isPaused;
 
-  const btn = document.getElementById('pause-btn');
-  const icon = btn?.querySelector('i');
-  const text = btn?.querySelector('.btn-text');
+    fetch('/api/pause', {
+        method: 'POST', 
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({pause: isPaused})
+    }).then(r=>r.json()).then(data=>console.log("Pause status:", data)).catch(console.error);
+};
 
-  btn?.classList.toggle('paused', isPaused);
-  if (icon) icon.className = isPaused ? 'fas fa-pause' : 'fas fa-play';
-  if (text) text.textContent = isPaused ? 'Tiếp tục' : 'Tạm dừng';
+window.exportViolations = function() {
+    if(!violations.length) return alert("Không có dữ liệu!");
+    let csv = "ID,BienSo,LoaiViPham,ThoiGian,ChuXe\n";
+    violations.forEach(v => { csv += `${v.id},${v.plate},${v.type},${v.time},${v.owner||''}\n`; });
+    const link = document.createElement("a");
+    link.href = 'data:text/csv;charset=utf-8,' + encodeURI(csv);
+    link.download = `ViPham_${new Date().toISOString().slice(0,10)}.csv`;
+    link.click();
+};
+function openViolationModal(v) {
+    document.getElementById('violation-modal').classList.remove('hidden');
 
-  fetch('/api/pause', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pause: isPaused })
-  }).catch(() => {});
+    document.getElementById('m-plate').innerText = v.plate || '';
+    document.getElementById('m-owner').innerText = v.owner || 'Không xác định';
+    document.getElementById('m-phone').innerText = v.phone || '';
+    document.getElementById('m-class').innerText = v.class_vehicle || '';
+    document.getElementById('m-province').innerText = v.province || '';
+    document.getElementById('m-date').innerText = v.registration_date || '';
+    document.getElementById('m-id').innerText = v.id_card || '';
+    document.getElementById('m-time').innerText = v.time || '';
+    document.getElementById('m-type').innerText = v.type || '';
+
+    document.getElementById('m-vehicle-img').src = v.img || '';
+    document.getElementById('m-plate-img').src = v.plate_img || '';
 }
 
-function exportViolations() {
-  const header = "id,plate,type,time,owner,phone,class_vehicle,province,registration_date,id_card,match_type";
-  const rows = (violations || []).map(v => ([
-    v.id ?? '',
-    csvSafe(v.plate ?? ''),
-    csvSafe(v.type ?? ''),
-    csvSafe(v.time ?? ''),
-    csvSafe(v.owner ?? ''),
-    csvSafe(v.phone ?? ''),
-    csvSafe(v.class_vehicle ?? ''),
-    csvSafe(v.province ?? ''),
-    csvSafe(v.registration_date ?? ''),
-    csvSafe(v.id_card ?? ''),
-    v.match_type ? 'true' : 'false'
-  ].join(',')));
-
-  const csv = [header, ...rows].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'violations.csv';
-  a.click();
-  URL.revokeObjectURL(url);
+function closeViolationModal() {
+    document.getElementById('violation-modal').classList.add('hidden');
 }
 
-function csvSafe(s) {
-  const str = String(s).replace(/"/g, '""');
-  return `"${str}"`;
-}
-
-function setOption(useLight) {
-  fetch('/api/set_option', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ use_traffic_light: useLight })
-  }).catch(() => {});
-}
-
-// ======================
-// 6) UI RENDER
-// ======================
 function updateTrackingPanel(vs) {
-  vehicles = vs || {};
-  const list = document.getElementById('vehicle-list');
-  if (!list) return;
-
-  const keys = Object.keys(vehicles);
-  if (keys.length === 0) {
-    list.innerHTML = '<p style="color:#aaa;text-align:center;">Không có phương tiện nào đang được theo dõi</p>';
-    return;
-  }
-
-  list.innerHTML = Object.entries(vehicles).map(([id, v]) => {
-    const img = v?.img || '';
-    const type = v?.type || 'unknown';
-    const plate = v?.plate || '';
-    const time = v?.time || '';
-    const owner = v?.owner || ''; // nếu backend bổ sung sau thì UI tự hiện
-
-    return `
-      <div class="vehicle-item">
-        <img class="vehicle-img" src="${img}" alt="vehicle" onerror="this.style.display='none'"/>
-        <div class="vehicle-info">
-          <b>ID: ${id}</b><br>
-          ${type} | ${plate}<br>
-          ${owner ? `<small style="color:#aaa">Chủ xe: ${owner}</small><br>` : ``}
-          <small>${time}</small>
-        </div>
-      </div>
-    `;
-  }).join('');
+    const list = document.getElementById('vehicle-list');
+    if(!vs) return;
+    const items = Object.entries(vs).map(([id, v]) => {
+        const plateHtml = v.plate === 'Reading...' ? `<span class="reading-text">Reading...</span>` : `<span class="plate-box">${v.plate}</span>`;
+        return `<div class="vehicle-item"><img src="${v.img}" class="vehicle-img"><div class="vehicle-info"><b>ID: ${id}</b> <small>${v.time}</small><br>${v.type} | ${plateHtml}</div></div>`;
+    }).join('');
+    list.innerHTML = items || '<p style="text-align:center;color:#666">Trống</p>';
 }
 
 function updateViolationPanel(viols) {
-  violations = viols || [];
-  const list = document.getElementById('violation-list');
-  if (!list) return;
-
-  if (violations.length === 0) {
-    list.innerHTML = '<p style="color:#aaa;text-align:center;">Chưa có vi phạm nào được ghi nhận</p>';
-    return;
-  }
-
-  list.innerHTML = violations.map(v => {
-    const badge = v.match_type ? `<span class="match-badge ok">MATCH TYPE</span>` : `<span class="match-badge warn">TYPE?</span>`;
-    const plateImg = v.plate_img ? `<img class="plate-img" src="${v.plate_img}" alt="plate" onerror="this.style.display='none'"/>` : '';
-
-    return `
-      <div class="violation-item">
-        <img class="violation-img" src="${v.img || ''}" alt="violation" onerror="this.style.display='none'"/>
-        <div class="violation-info">
-          <div class="violation-row">
-            <b>Xe ID: ${v.id}</b> | ${v.plate || ''}
-            ${badge}
-          </div>
-          <div><b>Vi phạm:</b> ${v.type || ''}</div>
-          <div class="violation-sub">
-            <small>Thời gian: ${v.time || ''}</small>
-            ${plateImg}
-          </div>
-          <div class="violation-sub">
-            <small style="color:#aaa">Chủ xe: ${v.owner || 'Chưa tra cứu'}</small>
-            ${v.class_vehicle ? `<small style="color:#aaa"> | Loại: ${v.class_vehicle}</small>` : ``}
-          </div>
-          ${v.phone ? `<div class="violation-sub"><small style="color:#aaa">SĐT: ${v.phone}</small></div>` : ``}
-        </div>
-      </div>
-    `;
-  }).join('');
+    violations = viols || [];
+    const list = document.getElementById('violation-list');
+    const items = violations.map(v => `
+        <div class="violation-item" onclick='openViolationModal(${JSON.stringify(v)})'>
+            <img src="${v.img}" class="violation-img" alt="Ảnh vi phạm xe ${v.plate}" title="Vi phạm ${v.type}">
+            <div class="violation-info"><b style="color:var(--danger)">${v.type}</b><br>ID: ${v.id} | <b>${v.plate}</b><br><small>${v.time}</small>${v.plate_img?`<br><img src="${v.plate_img}" class="plate-mini">`:''}</div>
+        </div>`).join('');
+    list.innerHTML = items || '<p style="text-align:center;color:#666">Chưa có vi phạm</p>';
 }
 
-function updateStats(stats) {
-  if (!stats) return;
-  document.getElementById('count-car').textContent = stats.car || 0;
-  document.getElementById('count-motorcycle').textContent = stats.motorcycle || 0;
-  document.getElementById('count-bus').textContent = stats.bus || 0;
-  document.getElementById('count-truck').textContent = stats.truck || 0;
+function updateStats(s) { 
+  if(s) { 
+    document.getElementById('count-car').innerText=s.car; 
+    document.getElementById('count-motorcycle').innerText=s.motorcycle; 
+    document.getElementById('count-truck').innerText=s.truck; 
+  } 
 }
 
-function updateTrafficLights(lights) {
-  if (!lights) return;
-  const left = document.getElementById('light-left');
-  const straight = document.getElementById('light-straight');
-  if (!left || !straight) return;
-
-  left.className = 'light';
-  straight.className = 'light';
-
-  if (lights.left) left.classList.add(lights.left, 'active');
-  if (lights.straight) straight.classList.add(lights.straight, 'active');
+function updateLights(l) {
+    if(!l) return;
+    const setL = (id, c) => { document.getElementById(id).className = `light ${c} active`; };
+    setL('light-left', l.left);
+    setL('light-straight', l.straight);
 }
 
 function updateFPS(fps) {
-  const el = document.getElementById('fps-value');
-  if (!el) return;
-
-  const val = Number.isFinite(fps) ? fps : parseFloat(fps);
-  el.textContent = (Number.isFinite(val) ? val : 0).toFixed(1);
+    const el = document.getElementById('fps-value');
+    if (!el) return;
+    el.innerText = fps ? fps.toFixed(1) : '0.0';
 }
 
 
-// ==============================
-// 7) ONLOAD
-// ==============================
 window.onload = function() {
-  initCanvas();
-  attachDrawingEvents();
-  connectWS();
+    initCanvas();
+    connectWS();
+    window.addEventListener('keydown', (e) => { if(e.key === 'Enter') finishDrawing(); });
+    document.getElementById('upload-form').onsubmit = (e) => {
+        e.preventDefault();
+        const f = document.getElementById('video-file').files[0];
+        const fd = new FormData(); fd.append("file", f);
+        fetch('/upload_video', {method:'POST', body:fd}).then(r=>r.json()).then(d=>alert(d.message));
+    };
+    
+    const tools = document.querySelector('.tools');
+    const header = document.querySelector('.tool-header');
 
-  const tools = document.querySelector('.tools');
-  if (tools) makeDraggable(tools);
+    let isDragging = false;
+    let startX, startY, initialLeft, initialTop;
 
-  document.getElementById('traffic-switch')?.addEventListener('change', function() {
-    setOption(this.checked);
-  });
+    header.onmousedown = (e) => {
+        e.preventDefault();
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
 
-  document.getElementById('upload-form')?.addEventListener('submit', function(e) {
-    e.preventDefault();
-    const file = document.getElementById('video-file').files[0];
-    if (!file) return alert('Chọn video!');
-    const form = new FormData();
-    form.append('file', file);
+        const rect = tools.getBoundingClientRect();
+        initialLeft = rect.left;
+        initialTop = rect.top;
 
-    fetch('/upload_video', { method: 'POST', body: form })
-      .then(r => r.json())
-      .then(d => alert(d.status === 'ok' ? d.message : 'Lỗi: ' + d.message))
-      .catch(err => alert('Lỗi upload: ' + err));
-  });
-};
+        tools.style.cursor = 'grabbing';
+    };
 
-// ==============================
-// 8) DRAGGABLE TOOLS
-// ==============================
-function makeDraggable(element) {
-  let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
-  let isDragging = false;
+    document.onmouseup = () => {
+        isDragging = false;
+        tools.style.cursor = 'default';
+    };
 
-  const dragMouseDown = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    pos3 = e.clientX || e.touches[0].clientX;
-    pos4 = e.clientY || e.touches[0].clientY;
-    document.onmouseup = closeDrag;
-    document.onmousemove = elementDrag;
-    isDragging = true;
-  };
+    document.onmousemove = (e) => {
+        if (!isDragging) return;
 
-  const elementDrag = (e) => {
-    if (!isDragging) return;
-    e.preventDefault();
-    const clientX = e.clientX || e.touches[0].clientX;
-    const clientY = e.clientY || e.touches[0].clientY;
-    pos1 = pos3 - clientX;
-    pos2 = pos4 - clientY;
-    pos3 = clientX;
-    pos4 = clientY;
-    element.style.top = (element.offsetTop - pos2) + "px";
-    element.style.left = (element.offsetLeft - pos1) + "px";
-  };
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
 
-  const closeDrag = () => {
-    document.onmouseup = null;
-    document.onmousemove = null;
-    isDragging = false;
-  };
+        tools.style.left = `${initialLeft + dx}px`;
+        tools.style.top = `${initialTop + dy}px`;
 
-  element.onmousedown = dragMouseDown;
-  element.addEventListener('touchstart', dragMouseDown, { passive: false });
+        tools.style.bottom = 'auto';
+        tools.style.right = 'auto';
+    };
 }
-// End of app.js
+
+function getScaleFactor() {
+    const img = document.getElementById('video-stream');
+    if (img && img.naturalWidth && img.clientWidth) {
+        return {
+            x: img.naturalWidth / img.clientWidth,
+            y: img.naturalHeight / img.clientHeight
+        };
+    }
+    return { x: 1, y: 1 };
+}

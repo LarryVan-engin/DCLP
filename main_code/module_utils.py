@@ -1,197 +1,310 @@
 """
-*******************************************************************************************************************
-General Information
 ********************************************************************************************************************
 Project:       DETECT LICENSE PLATES AND TRAFFIC PENALTY INTEGRATION
-File:          UTILS.py
-Description:   Utility functions for license plate reading, vehicle association, and result export.
-               Integrated support for OCR recognition and YOLO-based detection pipeline.
+File:          module_utils.py
+Description:   Utility module for Vietnamese license plate OCR, normalization,
+               vehicle association, and result export (FINAL VERSION).
 
 Author:        LARRY PHONG TRUC
-Email:         vanphongtruc1808@gmail.com
-Created:       05/10/2025
-Last Update:   06/11/2025
-Version:       1.3 (Vietnam License Plate Optimized)
-
-Python:        3.10.11
-Dependencies:  - easyocr
-               - numpy
-               - YOLOv12 models for vehicle/plate detection
-
-Copyright:     (c) 2025 IOE INNOVATION Team
-License:       [LICENSE_TYPE]
-
-Notes:         - Improved regex for Vietnamese license plates
-               - Added filtering for OCR noise and best-score selection
-*******************************************************************************************************************
+Updated by:    ChatGPT (VN ANPR refactor)
+Last Update:   2026-01-07
+Python:        3.10+
+********************************************************************************************************************
 """
 
-#######################################################################################################################
-# Imports
-#######################################################################################################################
+# =====================================================================
+# IMPORTS
+# =====================================================================
+import cv2
 import re
+import csv
+import numpy as np
 import easyocr
 
-#######################################################################################################################
-# OCR Initialization and Global Dictionaries
-#######################################################################################################################
-reader = easyocr.Reader(['en'], gpu=True)
+# =====================================================================
+# OCR INITIALIZATION
+# =====================================================================
+reader = easyocr.Reader(["en"], gpu=True)
 
-# Mapping for typical OCR misreads
-DICT_CHAR_TO_INT = {
-    'O': '0',
-    'I': '1',
-    'J': '3',
-    'A': '4',
-    'G': '6',
-    'S': '5',
-    'B': '8',
-    'Z': '2',
-    'T': '7'
+ALLOWLIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-."
+
+# =====================================================================
+# CHARACTER FIX TABLES (SEPARATED & CONTEXT-AWARE)
+# =====================================================================
+CHAR_TO_DIGIT = {
+    "O": "0", "Q": "0", "D": "0",
+    "I": "1", "L": "1",
+    "Z": "2",
+    "S": "5",
+    "B": "8",
+    "G": "6"
 }
 
-DICT_INT_TO_CHAR = {
-    '0': 'O',
-    '1': 'I',
-    '3': 'J',
-    '4': 'A',
-    '6': 'G',
-    '5': 'S'
+DIGIT_TO_CHAR = {
+    "0": "O",
+    "1": "I",
+    "2": "Z",
+    "5": "S",
+    "6": "G",
+    "8": "B"
 }
 
-#######################################################################################################################
-# CSV Writing Utility
-#######################################################################################################################
-def write_csv(results, output_path):
-    """
-    Write detection and recognition results to a CSV file.
+# =====================================================================
+# BASIC TEXT UTILS
+# =====================================================================
+def strip_symbols(text: str) -> str:
+    return re.sub(r"[.\-\s]", "", text)
 
-    Args:
-        results (dict): Nested dictionary containing detection results.
-        output_path (str): Destination file path for CSV output.
+def post_process_text(text: str) -> str:
+    return re.sub(r"[^A-Z0-9\.\-]", "", text.upper())
+
+def fix_char_to_digit(text: str) -> str:
+    return "".join(CHAR_TO_DIGIT.get(c, c) for c in text)
+
+def fix_digit_to_char(text: str) -> str:
+    return "".join(DIGIT_TO_CHAR.get(c, c) for c in text)
+
+# =====================================================================
+# IMAGE PREPROCESSING FOR OCR
+# =====================================================================
+def preprocess_variants(bgr_img):
     """
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(
-            'frame_nmr,vehicle_id,'
-            'vehicle_x1,vehicle_y1,vehicle_x2,vehicle_y2,'
-            'license_x1,license_y1,license_x2,license_y2,'
-            'license_plate_bbox_score,license_number,license_number_score\n'
+    Generate multiple grayscale/binary variants for robust OCR.
+    """
+    gray = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(gray, None, fx=1.8, fy=1.8, interpolation=cv2.INTER_CUBIC)
+
+    variants = []
+    for b in [11, 15]:
+        variants.append(
+            cv2.adaptiveThreshold(
+                gray, 255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY, b, 2
+            )
         )
 
-        for frame_nmr in results.keys():
-            for vehicle_id in results[frame_nmr].keys():
-                data = results[frame_nmr][vehicle_id]
+    _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    variants.append(otsu)
+    variants.append(cv2.bitwise_not(otsu))
 
-                if 'vehicle' in data and 'license_plate' in data:
-                    vx1, vy1, vx2, vy2 = data['vehicle']['bbox']
-                    lx1, ly1, lx2, ly2 = data['license_plate']['bbox']
+    return variants
 
-                    bbox_score = data['license_plate']['bbox_score']
-                    text = data['license_plate'].get('text', 'N/A')
-                    text_score = data['license_plate'].get('text_score', 0.0)
-
-                    f.write(
-                        '{},{},{},{},{},{},{},{},{},{},{},{},{}\n'.format(
-                            frame_nmr, vehicle_id,
-                            vx1, vy1, vx2, vy2,
-                            lx1, ly1, lx2, ly2,
-                            bbox_score, text, text_score
-                        )
-                    )
-
-    print(f"[INFO] CSV results successfully written to: {output_path}")
-
-#######################################################################################################################
-# License Plate Format Validation and Normalization
-#######################################################################################################################
-def license_complies_format(text):
+# =====================================================================
+# OCR LOW-LEVEL
+# =====================================================================
+def ocr_single(img_bw):
     """
-    Kiểm tra xem chuỗi biển số có tuân theo chuẩn Việt Nam hay không.
-    Hỗ trợ:
-        - Xe máy: 63-B9.68550, 51-A1.5678
-        - Ô tô:   30E-12345, 50D-9999
-        - Không dấu: 51H12345, 63B968550
+    OCR a single grayscale/binary image.
+    Returns (text, confidence).
     """
-    text = text.upper().replace(' ', '').replace(':', '').replace('_', '').replace(',', '')
-    for k, v in DICT_CHAR_TO_INT.items():
-        text = text.replace(k, v)
-    for k, v in DICT_INT_TO_CHAR.items():
-        text = text.replace(k, v)
+    res = reader.readtext(img_bw, allowlist=ALLOWLIST, detail=1)
+    if not res:
+        return "", 0.0
 
-    patterns = [
-        r"^\d{2}[A-Z]-\d{4,5}$",      # ô tô: 30E-12345 hoặc 50D-9999
-        r"^\d{2}[A-Z]\d-\d{4,5}$",    # xe máy: 63B9-68550 hoặc 51A1-5678
-        r"^\d{2}[A-Z]\d\.\d{4,5}$",   # xe máy có dấu chấm
-        r"^\d{2}[A-Z]-\d{4}$",        # biển ngắn
-        r"^\d{2}[A-Z]\d{4,5}$",       # ô tô không dấu
-        r"^\d{2}[A-Z]\d\d{4,5}$"      # xe máy không dấu
-    ]
-    return any(re.match(p, text) for p in patterns)
+    text = "".join(r[1] for r in res)
+    conf = float(np.mean([r[2] for r in res]))
+    return post_process_text(text), conf
 
-def format_license(text):
+# =====================================================================
+# FORMAT HELPERS
+# =====================================================================
+def format_motor_2line(top4: str, bottom_digits: str) -> str:
+    prefix = top4[:2]
+    series = top4[2:]
+    if len(bottom_digits) >= 5:
+        num = f"{bottom_digits[:3]}.{bottom_digits[3:5]}"
+    else:
+        num = bottom_digits
+    return f"{prefix} - {series} {num}"
+
+def format_car_2line(top3: str, bottom_digits: str) -> str:
+    if len(bottom_digits) >= 5:
+        num = f"{bottom_digits[:3]}.{bottom_digits[3:5]}"
+    else:
+        num = bottom_digits
+    return f"{top3} {num}"
+
+def format_car_1line(clean_digits: str) -> str:
+    prefix = clean_digits[:3]
+    rest = clean_digits[3:]
+    if len(rest) >= 5:
+        rest = f"{rest[:3]}.{rest[3:5]}"
+    return f"{prefix}-{rest}"
+
+# =====================================================================
+# OCR TWO-LINE (BEST SCORE)
+# =====================================================================
+def ocr_two_line_bestscore(crop_bgr, plate_type: str):
     """
-    Chuẩn hóa chuỗi biển số Việt Nam:
-      - Sửa ký tự OCR sai
-      - Thêm dấu '-' hoặc '.' đúng vị trí nếu thiếu
-      - Viết hoa ký tự
+    OCR for Vietnamese 2-line plates using best-score selection.
+    plate_type: 'motor' or 'car'
     """
-    text = text.upper().replace(' ', '').replace(':', '').replace('_', '')
-    text = re.sub(r'[^A-Z0-9\-\.]', '', text)
+    h = crop_bgr.shape[0]
+    split = int(h * 0.48)
 
-    for k, v in DICT_CHAR_TO_INT.items():
-        text = text.replace(k, v)
+    top = crop_bgr[:split, :]
+    bottom = crop_bgr[split:, :]
 
-    if re.match(r"^\d{2}[A-Z]\d\d{4,5}$", text):
-        text = text[:2] + '-' + text[2:4] + '.' + text[4:]
-    elif re.match(r"^\d{2}[A-Z]\d{4,5}$", text):
-        text = text[:3] + '-' + text[3:]
-    elif not ('-' in text or '.' in text):
-        text = text[:3] + '-' + text[3:]
+    best = {
+        "score": -1e9,
+        "top": "",
+        "bottom": "",
+        "ok": False
+    }
 
-    return text
-
-#######################################################################################################################
-# License Plate Reading (OCR)
-#######################################################################################################################
-def read_license_plate(license_plate_crop):
-    if license_plate_crop is None or license_plate_crop.size == 0:
-        return None, 0.0
-
-    try:
-        texts = reader.readtext(license_plate_crop, paragraph=True, detail=0)
-    except:
-        return None, 0.0
-
-    best_text = None
-    for text in texts:
-        if not isinstance(text, str):
+    for bw_top in preprocess_variants(top):
+        t_raw, t_conf = ocr_single(bw_top)
+        if not t_raw:
             continue
-        clean_text = re.sub(r'[^A-Z0-9\-\.]', '', text.upper().replace(' ', ''))
-        if len(clean_text) >= 6:
-            formatted = format_license(clean_text)
-            if license_complies_format(formatted):
-                if best_text is None or len(formatted) > len(best_text):
-                    best_text = formatted
+        t = strip_symbols(t_raw)
 
-    return best_text, 0.85
+        for bw_bot in preprocess_variants(bottom):
+            b_raw, b_conf = ocr_single(bw_bot)
+            if not b_raw:
+                continue
+            b = strip_symbols(b_raw)
 
+            if plate_type == "motor":
+                if len(t) < 4:
+                    continue
 
-#######################################################################################################################
-# Vehicle Association Utility
-#######################################################################################################################
-def get_car(license_plate, vehicle_track_ids):
+                t_fixed = (
+                    fix_char_to_digit(t[:2]) +
+                    fix_digit_to_char(t[2]) +
+                    fix_char_to_digit(t[3])
+                )
+                b_fixed = fix_char_to_digit(b)
+
+                if not re.fullmatch(r"\d{2}[A-Z]\d", t_fixed):
+                    continue
+                if not re.fullmatch(r"\d{3,5}", b_fixed):
+                    continue
+
+                bonus = 3.0 if len(b_fixed) == 5 else 0.5
+                score = (t_conf + b_conf) * 10.0 + bonus
+
+                if score > best["score"]:
+                    best.update(score=score, top=t_fixed, bottom=b_fixed, ok=True)
+
+            else:  # car 2-line
+                if len(t) < 3:
+                    continue
+
+                t_fixed = fix_char_to_digit(t[:2]) + fix_digit_to_char(t[2])
+                b_fixed = fix_char_to_digit(b)
+
+                if not re.fullmatch(r"\d{2}[A-Z]", t_fixed):
+                    continue
+                if not re.fullmatch(r"\d{3,5}", b_fixed):
+                    continue
+
+                bonus = 2.5 if len(b_fixed) == 5 else 0.5
+                score = (t_conf + b_conf) * 10.0 + bonus
+
+                if score > best["score"]:
+                    best.update(score=score, top=t_fixed, bottom=b_fixed, ok=True)
+
+    if not best["ok"]:
+        return "", False
+
+    if plate_type == "motor":
+        return format_motor_2line(best["top"], best["bottom"]), True
+    else:
+        return format_car_2line(best["top"], best["bottom"]), True
+
+# =====================================================================
+# MAIN OCR ENTRY (USED BY API)
+# =====================================================================
+def read_license_plate_vn(frame, x1, y1, x2, y2, pad_ratio=0.18):
     """
-    Match a detected license plate to a corresponding tracked vehicle.
+    Main OCR function for Vietnamese license plates.
+    Returns (text, confidence_flag).
     """
-    x1, y1, x2, y2, _, _ = license_plate
-    margin = 20  # cho phép sai lệch nhỏ
+    H, W = frame.shape[:2]
+    bw, bh = x2 - x1, y2 - y1
+    px, py = int(bw * pad_ratio), int(bh * pad_ratio)
 
-    for vehicle in vehicle_track_ids:
-        xcar1, ycar1, xcar2, ycar2, car_id, cls_name = vehicle
-        if (x1 > xcar1 - margin and y1 > ycar1 - margin and
-            x2 < xcar2 + margin and y2 < ycar2 + margin):
-            return vehicle
+    crop = frame[
+        max(0, y1 - py):min(H, y2 + py),
+        max(0, x1 - px):min(W, x2 + px)
+    ]
+
+    if crop.size == 0:
+        return None, False
+
+    h, w = crop.shape[:2]
+    ratio = w / max(h, 1)
+
+    # ================= TWO LINE =================
+    if ratio < 1.6 and (h / w) > 0.55:
+        plate_type = "motor" if ratio < 1.35 else "car"
+        text, ok = ocr_two_line_bestscore(crop, plate_type)
+        if text:
+            return text, ok
+
+    # ================= ONE LINE CAR =================
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(gray, None, fx=1.8, fy=1.8, interpolation=cv2.INTER_CUBIC)
+
+    raw, conf = ocr_single(gray)
+    clean = fix_char_to_digit(strip_symbols(raw))
+
+    if 6 <= len(clean) <= 8:
+        return format_car_1line(clean), True
+
+    return None, False
+
+# =====================================================================
+# VEHICLE ASSOCIATION
+# =====================================================================
+def get_car(license_bbox, vehicle_tracks):
+    """
+    Match license plate bbox to vehicle bbox.
+    """
+    x1, y1, x2, y2 = license_bbox
+
+    for vx1, vy1, vx2, vy2, vid, cls_name in vehicle_tracks:
+        if x1 > vx1 and y1 > vy1 and x2 < vx2 and y2 < vy2:
+            return vx1, vy1, vx2, vy2, vid, cls_name
 
     return -1, -1, -1, -1, -1, -1
 
-# End of File
+# =====================================================================
+# CSV EXPORT
+# =====================================================================
+def write_csv(results, output_path):
+    """
+    Export results dictionary to CSV.
+    """
+    header = [
+        "frame_nmr", "vehicle_id",
+        "vehicle_x1", "vehicle_y1", "vehicle_x2", "vehicle_y2",
+        "license_x1", "license_y1", "license_x2", "license_y2",
+        "license_plate_bbox_score",
+        "license_number", "license_number_score"
+    ]
+
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(header)
+
+        for frame_nmr, vehicles in results.items():
+            for vehicle_id, data in vehicles.items():
+                if "vehicle" not in data or "license_plate" not in data:
+                    continue
+
+                lp = data["license_plate"]
+                if "text" not in lp:
+                    continue
+
+                writer.writerow([
+                    frame_nmr, vehicle_id,
+                    *data["vehicle"]["bbox"],
+                    *lp["bbox"],
+                    lp.get("bbox_score", 0.0),
+                    lp["text"],
+                    lp.get("text_score", 0.0)
+                ])
+
+    print(f"[INFO] CSV written to: {output_path}")

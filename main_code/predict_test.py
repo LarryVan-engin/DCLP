@@ -27,7 +27,7 @@ from PIL import Image
 # Constants and Configuration
 #######################################################################################################################
 YOLO_PATH = r"D:\VSCode\DCLP\main_code\runs\detect\model_detect_license_plate.pt"
-IMAGE_TEST_PATH = r"D:\VSCode\DCLP\big_dataset\test\xelam.png"
+IMAGE_TEST_PATH = r"D:\VSCode\DCLP\big_dataset\test\maxload.png"
 SAVE_PATH = r"D:\VSCode\DCLP\main_code\result\plate_detect"
 
 # Load models

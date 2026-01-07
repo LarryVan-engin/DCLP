@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>AI-Based Traffic Violation System</title>
-
+  <title>AI Traffic Monitor</title>
+  <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
   <link rel="stylesheet" href="/static/style.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/konva@9/konva.min.js"></script>
@@ -12,23 +12,24 @@
 
 <body>
   <div class="title-bar">
-    <h1>AI-Based Traffic Violation System</h1>
+    <h1><i class="fas fa-camera"></i> AI TRAFFIC MONITOR SYSTEM</h1>
   </div>
 
   <div class="container">
     <div class="video-section">
-      <img id="video-stream" src="/stream" alt="Video Stream" />
-      <div id="canvas-container"></div>
+      <div class="video-wrapper">
+          <img id="video-stream" src="/stream" alt="Loading..." crossorigin="anonymous" />
+          <div id="canvas-container"></div>
+      </div>
     </div>
 
     <div class="right-panel">
       <div class="tracking-panel">
-        <h3>THEO DÕI PHƯƠNG TIỆN</h3>
+        <h3><i class="fas fa-car"></i> ĐANG THEO DÕI</h3>
         <div id="vehicle-list"></div>
       </div>
-
       <div class="violation-panel">
-        <h3>VI PHẠM</h3>
+        <h3><i class="fas fa-exclamation-triangle"></i> VI PHẠM</h3>
         <div id="violation-list"></div>
       </div>
     </div>
@@ -36,60 +37,101 @@
 
   <div class="control-bar">
     <div class="traffic-light">
-      <div class="light-container">
-        <span>Trái:</span>
-        <span id="light-left" class="light"></span>
-      </div>
-      <div class="light-container">
-        <span>Thẳng:</span>
-        <span id="light-straight" class="light"></span>
-      </div>
+      <div class="light-container"><span>Trái:</span> <span id="light-left" class="light"></span></div>
+      <div class="light-container"><span>Thẳng:</span> <span id="light-straight" class="light"></span></div>
     </div>
 
     <div class="stats">
-      <span>🏍️ Xe máy: <b id="count-motorcycle">0</b></span>
-      <span>🚗 Ô tô: <b id="count-car">0</b></span>
-      <span>🚚 Xe tải: <b id="count-truck">0</b></span>
-      <span>🚌 Xe buýt: <b id="count-bus">0</b></span>
-    </div>
-
-    <div class="badges">
-      <span class="badge">WS: <b id="ws-status">connecting</b></span>
-      <span class="badge">FPS: <b id="fps-value">0.0</b></span>
+      <span>🏍️ <b id="count-motorcycle">0</b></span>
+      <span>🚗 <b id="count-car">0</b></span>
+      <span>🚚 <b id="count-truck">0</b></span>
+      <span>🚌 <b id="count-bus">0</b></span>
     </div>
 
     <div class="control-options">
       <div class="switch-container">
         <label class="switch" for="traffic-switch">
-          <span class="switch-label-text">Phạt dựa trên đèn</span>
-          <input type="checkbox" id="traffic-switch" checked>
-          <span class="slider-ground"></span>
+            <input type="checkbox" id="traffic-switch" checked onchange="toggleTrafficMode()" aria-label="Bật/tắt chế độ phạt theo đèn">
+            <span class="slider-round"></span>
         </label>
+        <span class="text-small">Phạt theo đèn</span>
       </div>
 
-      <div class="upload-container">
-        <form id="upload-form">
-          <label for="video-file" class="file-label">Chọn video:</label>
-          <input type="file" id="video-file" accept="video/*" required>
-          <button type="submit" class="upload-btn">Upload</button>
-        </form>
+      <div class="fps-badges">
+        <span class="fps-badge">FPS: <b id="fps-value">0</b></span>
       </div>
+
+      <form id="upload-form" style="display:inline-block">
+        <input type="file" id="video-file" accept="video/*, image/*" style="display:none">
+        <label for="video-file" class="control-btn upload-btn"><i class="fas fa-upload"></i> Video</label>
+      </form>
+
+      <button id="pause-btn" class="control-btn" onclick="togglePause()">
+        <i class="fas fa-pause"></i> Dừng
+      </button>
+
+      <button class="control-btn export-btn" onclick="exportViolations()">
+        <i class="fas fa-file-csv"></i> CSV
+      </button>
     </div>
-
-    <button id="pause-btn" class="control-btn" onclick="togglePause()">
-      <i class="fas fa-play"></i>
-      <span class="btn-text">Tạm dừng</span>
-    </button>
-
-    <button onclick="exportViolations()">Export CSV</button>
   </div>
 
   <div class="tools">
-    <button onclick="setMode('line')">Vẽ Line (Vượt đèn đỏ)</button>
-    <button onclick="setMode('polygon')">Vẽ Vùng cấm</button>
-    <button onclick="clearDraw()">Xóa vùng</button>
+    <div class="tool-header">CẤU HÌNH VÙNG</div>
+    <div class="radio-group">
+      <label for="direction-select">Áp dụng cho:</label>
+        <select id="direction-select">
+            <option value="left">Hướng Rẽ Trái</option>
+            <option value="straight" selected>Hướng Đi Thẳng</option>
+        </select>
+    </div>
+    <hr style="border:0; border-top:1px solid #555; margin:5px 0">
+    <button onclick="setMode('light_zone')"><i class="far fa-square"></i> 1. Vùng Đèn</button>
+    <button onclick="setMode('line')"><i class="fas fa-slash"></i> 2. Vạch Phạt</button>
+    <button onclick="setMode('polygon')"><i class="fas fa-draw-polygon"></i> 3. Vùng Cấm</button>
+    <button onclick="clearDraw()" class="btn-danger"><i class="fas fa-trash"></i> Xóa Tất Cả</button>
+    <small style="color:#aaa; font-size:0.7em; margin-top:5px">*Chuột phải hoặc Enter để xong</small>
+  </div>
+  <!-- VIOLATION DETAIL MODAL -->
+  <div id="violation-modal" class="modal hidden">
+    <div class="modal-content">
+      <span class="close-btn" onclick="closeViolationModal()">&times;</span>
+
+      <h3>🚨 Thông tin vi phạm</h3>
+
+      <div class="modal-grid">
+        <div><b>Biển số:</b> <span id="m-plate"></span></div>
+        <div><b>Chủ xe:</b> <span id="m-owner"></span></div>
+        <div><b>SĐT:</b> <span id="m-phone"></span></div>
+        <div><b>Loại xe:</b> <span id="m-class"></span></div>
+        <div><b>Tỉnh:</b> <span id="m-province"></span></div>
+        <div><b>Ngày đăng ký:</b> <span id="m-date"></span></div>
+        <div><b>CCCD:</b> <span id="m-id"></span></div>
+        <div><b>Thời gian vi phạm:</b> <span id="m-time"></span></div>
+        <div><b>Loại vi phạm:</b> <span id="m-type"></span></div>
+      </div>
+
+      <div class="modal-images">
+        <img
+          id="m-vehicle-img"
+          alt="Ảnh phương tiện vi phạm"
+          title="Ảnh phương tiện"
+        />
+        <img
+          id="m-plate-img"
+          alt="Ảnh biển số phương tiện"
+          title="Ảnh biển số"
+        />
+      </div>
+
+    </div>
   </div>
 
   <script src="/static/app.js"></script>
+  <script>
+    document.getElementById('video-file').onchange = function() {
+        document.getElementById('upload-form').dispatchEvent(new Event('submit'));
+    };
+  </script>
 </body>
 </html>
