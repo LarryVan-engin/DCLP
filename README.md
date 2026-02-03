@@ -1,199 +1,273 @@
-# Project2
-Đã tạo môi trường ảo .venv sẵn, không cần phải install lại 
+HỆ THỐNG PHÁT HIỆN VI PHẠM GIAO THÔNG AI
+KIẾN TRÚC EDGE – CLOUD (CÓ NHẬN DIỆN LÀN XE TỰ ĐỘNG)
 
-Chỉnh lại đường dẫn (path) đúng trên file yaml và trên code. 
-
-Có thể train lại và sử dụng folder big_dataset để train khối lượng to hơn 
-
-Độ chính xác chưa cao, cần điều chỉnh lại cái tập dữ liệu xem có vấn đề gì không khớp hay không 
-
-BÁO CÁO KỸ THUẬT: HỆ THỐNG PHÁT HIỆN VI PHẠM GIAO THÔNG AI (MÔ HÌNH EDGE-CLOUD)
 Ngày lập: 30/01/2026
-Mục tiêu: Xây dựng hệ thống giám sát giao thông thông minh, xử lý Real-time tại biên (Edge), tối ưu hóa băng thông và lưu trữ tập trung.
+Phiên bản: v2.0 (Bổ sung Lane Detection không cần train)
 
-1. TỔNG QUAN KIẾN TRÚC HỆ THỐNG
-Thay vì mô hình xử lý tập trung (Monolithic) trên một máy tính mạnh, hệ thống chuyển sang kiến trúc phân tán Edge-Cloud để đảm bảo khả năng mở rộng, giảm độ trễ và tiết kiệm băng thông.
+Mục tiêu:
+Xây dựng hệ thống giám sát giao thông thông minh, xử lý Real-time tại Edge, có khả năng tự động nhận diện làn đường dựa trên quỹ đạo xe, giảm cấu hình thủ công, tối ưu băng thông và lưu trữ tập trung.
 
-Sơ đồ luồng dữ liệu (Data Flow)
+1. TỔNG QUAN KIẾN TRÚC HỆ THỐNG (EDGE – CLOUD)
 
-```
-    ================================================================================
-    Khu vực 1: THIẾT BỊ BIÊN (EDGE DEVICE - Camera/Jetson/Pi)
-    Nhiệm vụ: Phát hiện lỗi, Cắt ảnh/Clip, Gửi về Server.
-    ================================================================================
-        |
-        v
-    [Camera Sensor] 
-        | (Luồng video thô)
-        v
-    [Bộ Đệm RAM (Circular Buffer)] <---(Lưu liên tục 5-10 giây quá khứ)--
-        |                                                            |
-        +---> [THREAD 1: AI DETECTION]                               |
-        |       |                                                    |
-        |       +--> [YOLO Vehicle: Phát hiện xe]                    |
-        |       +--> [YOLO Traffic Light: Đọc đèn]                   |
-        |                                                            |
-        v                                                            |
-    (Logic Kiểm Tra Vi Phạm?) -------------------------> (KHÔNG) -------+ (Quay lại)
-        |
-        | (CÓ - VI PHẠM!)
-        v
-    [EVENT TRIGGER - KÍCH HOẠT SỰ KIỆN]
-        |
-        +---> [Task A: Chụp Ảnh]
-        |       |-- Crop ảnh toàn cảnh xe
-        |       |-- Crop ảnh vùng biển số (độ nét cao nhất)
-        |
-        +---> [Task B: Trích xuất Video]
-                |-- Lấy 5s quá khứ từ Buffer RAM
-                |-- Ghi tiếp 5s tương lai
-                |-- Ghép thành file 'vipham_xxx.mp4'
-        |
-        v
-    [UPLOAD WORKER]
-        |-- Gửi HTTP POST (JSON Metadata + Ảnh + Video MP4)
-        |
-        | (Internet / 4G / LAN)
-        v
-    ================================================================================
-    Khu vực 2: MÁY CHỦ TRUNG TÂM (CLOUD / SERVER)
-    Nhiệm vụ: OCR, Định danh, Lưu trữ lâu dài.
-    ================================================================================
-        |
-    [API GATEWAY] (Nhận dữ liệu từ Edge)
-        |
-        +-----------------------------------------+
-        |                                         |
-        v                                         v
-    [DỊCH VỤ OCR & ĐỊNH DANH]                 [HỆ THỐNG LƯU TRỮ]
-        |                                         |
-        |-- 1. Nhận ảnh biển số crop              |-- Lưu ảnh vào HDD/S3
-        |-- 2. Chạy AI đọc ký tự (OCR)            |-- Lưu video .mp4 vào HDD/S3
-        |-- 3. Query DB chủ xe (MySQL/Postgres)   |
-        |                                         |
-        v                                         v
-    [CƠ SỞ DỮ LIỆU VI PHẠM] <------------------------+
-    (Lưu kết quả cuối cùng: Biển số, Tên chủ xe, Lỗi, Link Video/Ảnh)
-```
+Hệ thống sử dụng kiến trúc phân tán, trong đó:
+
+Edge Device: Phát hiện phương tiện, đèn giao thông, tự suy ra làn xe, xác định vi phạm
+
+Cloud Server: OCR, định danh chủ xe, lưu trữ, hậu kiểm
+
+1.1 Sơ đồ luồng dữ liệu (Data Flow – Updated)
+
+        ================================================================================
+        Khu vực 1: THIẾT BỊ BIÊN (EDGE DEVICE - Camera / Jetson / Pi)
+        Nhiệm vụ: Phát hiện – Suy luận – Kích hoạt sự kiện – Gửi dữ liệu
+        ================================================================================
+
+        [Camera Sensor]
+            |
+            | (Luồng video thô)
+            v
+        [Bộ Đệm RAM - Circular Buffer]  <---- Lưu 5–10 giây quá khứ
+            |
+            +--------------------------------------------------------------+
+            |                                                              |
+            |                                                              |
+            v                                                              v
+        [THREAD 1: READ CAMERA]                                 [THREAD 2: AI INFERENCE]
+        (Đọc frame liên tục)                                   (Có thể skip frame)
+                                                                    |
+                                                                    |
+                                                    +---------------+----------------+
+                                                    |                                |
+                                            [YOLO Vehicle Detection]        [YOLO Traffic Light]
+                                            (Detect + Class xe)              (Detect trạng thái đèn)
+                                                    |
+                                                    v
+                                            [VEHICLE TRACKER]
+                                        (ByteTrack / DeepSORT)
+                                                    |
+                                                    v
+                                        [TRAJECTORY BUFFER]
+                            (Lưu quỹ đạo: (cx, cy) theo track_id, theo thời gian)
+                                                    |
+                                                    v
+        ================================================================================
+                MODULE MỚI: TỰ ĐỘNG NHẬN DIỆN LÀN ĐƯỜNG (LANE ESTIMATION)
+        ================================================================================
+                                                    |
+                                        [LANE ESTIMATOR MODULE]
+                                                    |
+                +-------------------------------------+----------------------------------+
+                |                                     |                                   |
+                | 1. Thu thập quỹ đạo xe              | 2. Chuẩn hóa quỹ đạo              |
+                |    - Track tồn tại ≥ N frame        |    - Hướng chuyển động            |
+                |    - Loại bỏ track nhiễu            |    - Đường hồi quy (Linear fit)   |
+                |                                     |                                   |
+                | 3. Gom cụm quỹ đạo (Clustering)                                         |
+                |    - DBSCAN / KMeans                                                    |
+                |    - Mỗi cluster = 1 làn đường                                          |
+                |                                                                         |
+                | 4. Sinh mô hình làn (Lane Model)                                        |
+                |    - Lane ID                                                            |
+                |    - Lane center line                                                   |
+                |    - Lane width (ước lượng)                                             |
+                |                                                                         |
+                | 5. Gán xe vào làn                                                       |
+                |    - vehicle.track_id → lane_id                                         |
+                |                                                                         |
+                +-------------------------------------------------------------------------+
+                                                    |
+                                                    v
+                                        [LOGIC KIỂM TRA VI PHẠM]
+                            (Đèn đỏ + Làn + Loại xe + Hướng di chuyển)
+                                                    |
+                                +--------------------+--------------------+
+                                |                                         |
+                            (KHÔNG)                                   (CÓ – VI PHẠM)
+                                |                                         |
+                                v                                         v
+                        (Quay lại Buffer)                    [EVENT TRIGGER – KÍCH HOẠT]
+                                                                        |
+                +--------------------------------------------------------+------------------+
+                |                                                        |                  |
+            [Task A: Chụp Ảnh]                                  [Task B: Trích Video]     |
+            - Ảnh toàn cảnh xe                                  - 5s trước từ Buffer      |
+            - Crop vùng biển số                                 - 5s sau sự kiện          |
+                                                                - Ghép thành MP4          |
+                |                                                        |
+                +-------------------------------+------------------------+
+                                                |
+                                                v
+                                        [THREAD 3: UPLOAD WORKER]
+                                (HTTP POST: Metadata + Ảnh + Video)
+                                                |
+                                                v
+        ================================================================================
+        Khu vực 2: SERVER / CLOUD
+        ================================================================================
+
 
 2. YÊU CẦU PHẦN CỨNG & MÔI TRƯỜNG
 A. Thiết bị Biên (Edge Device)
-Yêu cầu: Nhỏ gọn, chịu nhiệt tốt, có khả năng xử lý AI (NPU/GPU).
 
-Lựa chọn tối ưu: NVIDIA Jetson Orin Nano hoặc Jetson Nano (cũ).
+NVIDIA Jetson Orin Nano / Jetson Nano
 
-Ưu điểm: Có GPU CUDA, hỗ trợ TensorRT giúp AI chạy cực nhanh.
+Thay thế: Raspberry Pi 5 / Orange Pi 5
 
-Lựa chọn thay thế: Raspberry Pi 5 hoặc Orange Pi 5.
+Model chạy dạng ONNX / TensorRT
 
-Lưu ý: Phải dùng mô hình định dạng ONNX hoặc NCNN/TFLite.
-
-Lưu trữ: Thẻ nhớ tốc độ cao (Class 10 U3) hoặc SSD NVMe (khuyên dùng để bền bỉ).
+Lưu trữ: SSD NVMe hoặc SD U3
 
 B. Máy chủ (Server)
-Cấu hình: CPU mạnh (để chạy OCR), RAM từ 8GB trở lên. Không bắt buộc GPU nếu lượng request không quá lớn.
 
-Phần mềm: Python Backend (FastAPI/Django), Database (PostgreSQL/MySQL), Object Storage (MinIO hoặc lưu Local).
+CPU mạnh, RAM ≥ 8GB
 
-3. THIẾT KẾ CHI TIẾT MODULE EDGE (TẠI BIÊN)
-Đây là "đôi mắt" của hệ thống. Nhiệm vụ là phát hiện, không phải định danh.
+Python Backend (FastAPI / Django)
 
-3.1. Các Model AI sử dụng
-Không chạy file .pt gốc mà phải convert (Quantization):
+Database: PostgreSQL / MySQL
 
-Vehicle Detection: YOLOv8n/v11n (Convert sang TensorRT hoặc ONNX).
+Object Storage: MinIO / Local FS
 
-Traffic Light: YOLOv8n (Training trên tập dữ liệu đèn giao thông VN). Chỉ chạy trên vùng ROI (Region of Interest) để giảm tải.
+3. THIẾT KẾ CHI TIẾT MODULE EDGE (UPDATED)
+3.1 Các Model AI sử dụng
 
-Plate Detection (Optional): Chỉ detect vị trí khung biển số để crop ảnh chính xác. Không đọc chữ.
+Vehicle Detection: YOLOv8n / YOLOv11n (TensorRT / ONNX)
 
-3.2. Logic "Bộ đệm vòng" (Circular Buffer) - Tính năng quay Video
-Để giải quyết bài toán "Cắt clip vi phạm" mà không ghi đĩa liên tục:
+Traffic Light Detection: YOLOv8n (ROI cố định)
 
-Cơ chế: Sử dụng collections.deque trong Python để lưu giữ khoảng 150-300 frames (5-10 giây) trong RAM.
+KHÔNG dùng model lane segmentation
 
-Trigger: Khi logic phát hiện is_violation == True:
+3.2 Module Nhận Diện Làn Xe (Lane Estimation – NEW)
+Mục tiêu
 
-Khóa buffer hiện tại (đây là đoạn video trước vi phạm).
+Tự động phân chia làn đường
 
-Tiếp tục ghi hình thêm 5 giây (đoạn video sau vi phạm).
+Không cần train
 
-Ghép 2 đoạn lại -> Lưu thành file .mp4 tạm thời.
+Không cần vẽ tay lane
 
-Gửi đi và xóa ngay lập tức.
+Thích nghi với từng camera
 
-3.3. Tối ưu hiệu năng (Performance Tuning)
-Multithreading: Tách biệt 3 luồng:
+Nguyên lý
 
-Thread 1: Đọc camera & nạp Buffer (Quan trọng nhất, không được lag).
+Xe chạy theo làn → quỹ đạo song song → gom cụm quỹ đạo = làn
 
-Thread 2: Chạy AI Inference (Có thể skip frame nếu quá tải).
+Thuật toán
 
-Thread 3: Upload dữ liệu (Network I/O không được chặn AI).
+Tracker: ByteTrack / DeepSORT
 
-Độ phân giải: Resize input cho AI xuống 640x360 hoặc 640x480. Ảnh bằng chứng giữ nguyên độ phân giải gốc (HD/FullHD).
+Thu thập ≥ 10–30 giây quỹ đạo ban đầu
 
-4. THIẾT KẾ CHI TIẾT MODULE SERVER (TẠI MÁY CHỦ)
-Đây là "bộ não" xử lý thông tin chi tiết.
+Gom cụm bằng DBSCAN
 
-4.1. Quy trình xử lý nhận tin
-API Endpoint: POST /api/v1/violations
+Input: trajectories (list of polyline)
+Output: lane_id cho mỗi trajectory
 
-Input:
+Output
 
-metadata: JSON (Camera ID, Timestamp, Loại lỗi, ID Track).
+lane_id
 
-image_full: Ảnh toàn cảnh.
+lane_center_line
 
-image_plate: Ảnh crop vùng biển số (chất lượng cao nhất).
+lane_width (ước lượng)
 
-video_clip: File .mp4 (độ dài 10-15s).
+Cache vào lane_model.pkl
 
-4.2. OCR & Định danh (Identification)
-OCR Engine: Sử dụng PaddleOCR hoặc VietOCR chạy trên Server. Nhận input là image_plate.
+3.3 Logic Vi Phạm (Cập Nhật)
 
-Logic:
+Ví dụ:
 
-OCR đọc ra text thô (VD: "29A12345").
+Xe máy đi vào làn ô tô
 
-Chuẩn hóa text (xóa ký tự lạ, format về dạng chuẩn).
+Ô tô vượt làn
 
-Query Database: SELECT * FROM owners WHERE plate_number = '29A12345'.
+Vượt đèn đỏ sai làn
 
-Nếu không thấy: Ghi nhận là "Xe lạ/Chưa đăng ký".
+if vehicle.lane_id == CAR_LANE and vehicle.type == "motorbike":
+    violation = "Xe máy đi vào làn ô tô"
 
-4.3. Lưu trữ (Storage Strategy)
-Database (SQL): Chỉ lưu text (Thông tin chủ xe, đường dẫn file ảnh/video, thời gian, trạng thái xử lý).
+3.4 Bộ đệm vòng (Circular Buffer)
 
-File System: Lưu file ảnh và video theo cấu trúc thư mục: /data/YYYY/MM/DD/{camera_id}/{violation_id}.mp4.
+(KHÔNG THAY ĐỔI – giữ nguyên)
 
-5. CHIẾN LƯỢC TRIỂN KHAI (ROADMAP)
-Để chuyển từ code hiện tại sang hệ thống mới, bạn cần thực hiện theo các bước:
+collections.deque
 
-Giai đoạn 1: Chuẩn bị Edge Core (Tách Code)
-Loại bỏ hoàn toàn thư viện Pandas, OCR khỏi code Edge.
+150–300 frames
 
-Viết class CircularBuffer để quản lý luồng video trong RAM.
+Cắt video trước & sau vi phạm
 
-Tối ưu luồng read_camera bằng Threading.
+3.5 Tối ưu hiệu năng
 
-Giai đoạn 2: Tối ưu Model AI
-Thực hiện export model YOLO sang TensorRT (nếu dùng Jetson) hoặc ONNX.
+3 Thread độc lập:
 
-Test FPS trên thiết bị thật. Mục tiêu: > 15 FPS là đạt yêu cầu.
+Read Camera
 
-Giai đoạn 3: Xây dựng Server Backend
-Dựng API nhận file Upload.
+AI + Lane Estimation
 
-Tích hợp module OCR vào API này (xử lý bất đồng bộ - Background Task để không làm timeout kết nối của Edge).
+Upload
 
-Giai đoạn 4: Integration Test (Kiểm thử tích hợp)
-Giả lập vi phạm trước camera.
+AI input: 640×360
 
-Kiểm tra:
+Evidence giữ nguyên HD
 
-Edge có phát hiện không?
+4. MODULE SERVER (GIỮ NGUYÊN)
+4.1 API
 
-Edge có tự tạo file MP4 không?
+POST /api/v1/violations
 
-Server có nhận được file và đọc ra đúng biển số không?
+Metadata bổ sung:
+
+{
+  "lane_id": 2,
+  "lane_type": "car_lane"
+}
+
+4.2 OCR & Định danh
+
+PaddleOCR / VietOCR
+
+Chuẩn hóa biển số
+
+Query DB
+
+4.3 Lưu trữ
+
+SQL: text + metadata
+
+File system: /data/YYYY/MM/DD/camera_id/
+
+5. ROADMAP TRIỂN KHAI (UPDATED)
+Giai đoạn 1: Edge Core
+
+Tách OCR khỏi Edge
+
+Viết LaneEstimator
+
+Tích hợp Tracker + Trajectory Buffer
+
+Giai đoạn 2: AI Optimization
+
+Export YOLO → TensorRT
+
+Test FPS ≥ 15
+
+Giai đoạn 3: Backend
+
+API nhận file
+
+OCR chạy background task
+
+Giai đoạn 4: Integration Test
+
+Test phân làn
+
+Test vi phạm theo làn
+
+Test clip MP4
+
+6. ĐÁNH GIÁ GIẢI PHÁP NHẬN DIỆN LÀN
+Tiêu chí	Kết quả
+Tự động	100%
+Không cần train	✅
+Phù hợp giao thông VN	✅
+Độ chính xác	~85–90%
+Tải Edge	Thấp
