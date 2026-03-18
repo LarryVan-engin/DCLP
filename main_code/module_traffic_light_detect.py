@@ -36,8 +36,8 @@ from PIL import Image
 # Constants and Configuration
 #######################################################################################################################
 # Configuration constants
-YOLO_PATH = r"D:\VSCode\DCLP\main_code\runs\detect\model_detect_license_plate.pt"
-TEST_IMAGE = r"D:\VSCode\DCLP\big_dataset\test\xelam.png"
+YOLO_PATH = r"D:\VSCode\DCLP\main_code\runs\detect\traffic_light\weights\best.pt"
+TEST_IMAGE = r"D:\VSCode\DCLP\big_dataset\test\trafficlight.jpg"
 SAVE_PATH = "D:\VSCode\DCLP\main_code/result/vehicle_detect"
 
 
