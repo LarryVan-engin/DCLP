@@ -18,7 +18,7 @@ import easyocr
 # CONFIG
 # =====================================================================
 YOLO_PATH = r"D:\VSCode\DCLP\main_code\runs\detect\model_detect_license_plate.pt"
-IMAGE_TEST_PATH = r"D:\VSCode\DCLP\big_dataset\test\volvo2.png"
+IMAGE_TEST_PATH = r"D:\VSCode\DCLP\big_dataset\test\xemay.png"
 SAVE_PATH = r"D:\VSCode\DCLP\main_code\result\plate_detect"
 
 PLATE_PAD_PERCENT = 0.18
