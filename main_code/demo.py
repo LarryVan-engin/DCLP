@@ -33,7 +33,8 @@ CONFIG_FILE = f"config_{os.path.splitext(os.path.basename(VIDEO_NAME))[0]}.json"
 # MODELS
 coco_model = YOLO("yolo12n.pt")
 plate_model = YOLO(r"D:\VSCode\DCLP\main_code\runs\detect\model_detect_license_plate.pt")
-ocr_reader = easyocr.Reader(["en"], gpu=True)
+traffic_light_model = YOLO(r"D:\VSCode\DCLP\main_code\runs\detect\model_detect_traffic_light.pt")
+ocr_reader = easyocr.Reader(["en"], gpu=False)
 
 # Tách biệt Class
 CAR_CLASSES = {2, 5, 7} # Car, Bus, Truck
@@ -55,6 +56,7 @@ def read_plate(crop):
     return re.sub(r"[^A-Z0-9]", "", "".join([r[1] for r in res]).upper())
 
 def get_normalized_x(x, y, roi_pts):
+    """Chiếu tọa độ X thành tỷ lệ % (0.0 -> 1.0) theo hình thang phối cảnh"""
     top_y, bot_y = roi_pts[0][1], roi_pts[2][1]
     if y <= top_y: y = top_y + 1
     if y >= bot_y: y = bot_y - 1
@@ -141,7 +143,7 @@ def calculate_data_driven_lanes(car_boxes, moto_boxes, roi_pts):
 
     if not cars_norm:
         boundaries = [0.0, 0.4, 0.7, 1.0]
-        lane_labels = ["Lane O To (CARS ONLY)", "Lane Tong Hop", "Lane Xe May"]
+        lane_labels = ["Lane O To", "Lane Tong Hop", "Lane Xe May"]
         car_only_zones.append((0.0, 0.4))
     else:
         # 1. ĐẾM SỐ LƯỢNG LÀN Ô TÔ
@@ -190,7 +192,7 @@ def calculate_data_driven_lanes(car_boxes, moto_boxes, roi_pts):
                 label = f"Lane Tong Hop {i+1}" if N_car_lanes > 1 else "Lane Tong Hop"
             else:
                 # Nếu hoàn toàn không có xe máy -> Làn đó chính là Làn Ô Tô (Cấm địa)
-                label = f"Lane O To {i+1}" if N_car_lanes > 1 else "Lane O To (CARS ONLY)"
+                label = f"Lane O To {i+1}" if N_car_lanes > 1 else "Lane O To"
                 car_only_zones.append((b_left, b_right)) # Đưa vào danh sách bắt lỗi
                 
             boundaries.append(b_right)
@@ -244,7 +246,6 @@ def process_video(input_path, output_path="output_all_violations.avi"):
     frame_idx = 0
     vehicles = {}
     os.makedirs("plate_crops", exist_ok=True)
-    is_red_light = True 
     
     car_boxes_learning = []
     moto_boxes_learning = []
@@ -263,6 +264,38 @@ def process_video(input_path, output_path="output_all_violations.avi"):
         boxes, _, clss = extract_boxes(res)
         track_ids = res.boxes.id.int().cpu().tolist() if res.boxes.id is not None else []
         
+        # ==================== PHÁT HIỆN ĐÈN GIAO THÔNG ====================
+        top_half_frame = frame[0:FRAME_HEIGHT//2, 0:FRAME_WIDTH]
+        res_light = traffic_light_model(top_half_frame, verbose=False)[0]
+        boxes_l, confs_l, clss_l = extract_boxes(res_light)
+        current_light = "den_xanh" # Mặc định là đèn xanh nếu không phát hiện được đèn đỏ hoặc vàng
+
+        for i in range(len(boxes_l)):
+            if confs_l[i] < 0.45: continue
+            name = res_light.names[int(clss_l[i])]
+
+            if name == "den_do":
+                current_light = "den_do"
+            elif name == "den_vang" and current_light != "den_do":
+                current_light = "den_vang"
+        
+        # --- VẼ BOUNDING BOX CHO ĐÈN GIAO THÔNG ---
+            xl, yl, xr, yr = map(int, boxes_l[i])
+            conf_val = confs_l[i]
+            
+            # Chọn màu viền tương ứng với màu đèn
+            if name == "den_do": color_l = (0, 0, 255)        # Đỏ
+            elif name == "den_vang": color_l = (0, 255, 255) # Vàng
+            else: color_l = (0, 255, 0)                    # Xanh (nếu có detect)
+                
+            # Vẽ khung và text lên màn hình display
+            cv2.rectangle(display, (xl, yl), (xr, yr), color_l, 2)
+            cv2.putText(display, f"{name.upper()}:{conf_val:.2f}", (xl, max(20, yl - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_l, 2)
+
+        is_red_light = (current_light == "den_do")
+        is_yellow_light = (current_light == "den_vang")
+
+        # --- GIAI ĐOẠN 1: HỌC BOUNDING BOX (100 FRAME ĐẦU) ---
         if frame_idx <= OBSERVATION_FRAMES:
             cv2.putText(display, f"LEARNING DATA-DRIVEN LANES... {frame_idx}/{OBSERVATION_FRAMES}", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,165,255), 3)
             for i, box in enumerate(boxes):
@@ -290,7 +323,9 @@ def process_video(input_path, output_path="output_all_violations.avi"):
             cv2.fillPoly(overlay, [lane_poly], color)
             M = cv2.moments(lane_poly)
             if M["m00"] != 0:
-                cv2.putText(display, label, (int(M["m10"] / M["m00"]) - 70, int(M["m01"] / M["m00"])), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
+                cv2.putText(display, label, (cx - 70, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
                 
         cv2.addWeighted(overlay, LANE_ALPHA, display, 1 - LANE_ALPHA, 0, display)
 
@@ -317,7 +352,9 @@ def process_video(input_path, output_path="output_all_violations.avi"):
 
             if tid not in vehicles:
                 vehicles[tid] = {'path': deque(maxlen=PATH_HISTORY), 'status': 'OK', 
-                                 'wrong_lane': False, 'red_light': False, 'wrong_way': False}
+                                 'wrong_lane': False, 'red_light': False, 'yellow_light': False, 'wrong_way': False,
+                                 'saved': False}
+                
             v = vehicles[tid]
             v['path'].append((center_x, bottom_y))
 
@@ -328,37 +365,79 @@ def process_video(input_path, output_path="output_all_violations.avi"):
                 if dy_way > 15: 
                     v['wrong_way'] = True
 
-            # BẮT LỖI SAI LÀN BẰNG DANH SÁCH VÙNG CẤM
+            # 1. BẮT LỖI SAI LÀN BẰNG DANH SÁCH VÙNG CẤM
             if not v['wrong_lane']:
                 if cls_id in MOTO_CLASSES:
-                    # Kiểm tra xem tâm xe máy có rơi vào BẤT KỲ làn nào được dán nhãn "Lane O To" không
                     for (z_start, z_end) in car_only_zones:
                         if z_start <= norm_x <= z_end:
                             v['wrong_lane'] = True
-                            break # Dính 1 vùng là phạt luôn, không cần xét tiếp
+                            break
 
-            if is_red_light and not v['red_light']:
-                if center_y < roi_top_y: 
-                    right_turn = False
-                    if len(v['path']) > 10: 
-                        dx = v['path'][-1][0] - v['path'][-10][0]
-                        dy = v['path'][-1][1] - v['path'][-10][1]
-                        if dx > 15 and dx > abs(dy) * 1.5: right_turn = True
-                    
-                    if not right_turn: v['red_light'] = True
+            # 2. BẮT LỖI VƯỢT ĐÈN ĐỎ VÀ VƯỢT ĐÈN VÀNG
+            if center_y < roi_top_y:
+                right_turn = False
+                if len(v['path']) > 10:
+                    dx = v['path'][-1][0] - v['path'][-10][0]
+                    dy = v['path'][-1][1] - v['path'][-10][1]
+                    if dx > 15 and dx > abs(dy) * 1.5: right_turn = True
+                
+                if not right_turn:
+                    if not v['red_light'] and not v['yellow_light']:
+                        if is_red_light:
+                            v['red_light'] = True
+                        elif is_yellow_light:
+                            v['yellow_light'] = True
 
             errors = []
             if v['wrong_way']: errors.append("NGUOC CHIEU")
             if v['wrong_lane']: errors.append("SAI LAN")
             if v['red_light']: errors.append("VUOT DEN DO")
+            if v['yellow_light']: errors.append("VUOT DEN VANG")
 
             is_violating = len(errors) > 0
             
             if not is_violating:
+                # Nếu rẽ phải hợp lệ
                 if len(v['path']) > 10 and (v['path'][-1][0] - v['path'][-10][0]) > 15 and (v['path'][-1][0] - v['path'][-10][0]) > abs(v['path'][-1][1] - v['path'][-10][1]) * 1.5:
                     v['status'] = 'RE PHAI (OK)'
             else:
+                # NẾU CÓ VI PHẠM (Rơi vào nhánh else này)
                 v['status'] = " + ".join(errors)
+
+                # ==================== LOGIC CHỤP ẢNH & ĐỌC BIỂN SỐ ====================
+                if not v.get('saved', False): 
+                    # 1. Cắt hình ảnh chiếc xe vi phạm (Crop)
+                    car_crop = frame[max(0, y1):min(FRAME_HEIGHT, y2), max(0, x1):min(FRAME_WIDTH, x2)]
+                    
+                    if car_crop.size > 0:
+                        # 2. Đưa ảnh crop của xe vào model detect biển số
+                        plate_res = plate_model(car_crop, verbose=False)[0]
+                        p_boxes, p_confs, p_clss = extract_boxes(plate_res)
+                        
+                        plate_text = "UNKNOWN"
+                        
+                        # 3. Nếu tìm thấy biển số, cắt tiếp biển số và đưa vào EasyOCR
+                        if len(p_boxes) > 0:
+                            # Lấy biển số rõ nhất (độ tự tin cao nhất)
+                            best_idx = np.argmax(p_confs)
+                            px1, py1, px2, py2 = map(int, p_boxes[best_idx])
+                            
+                            plate_crop = car_crop[max(0, py1):min(car_crop.shape[0], py2), max(0, px1):min(car_crop.shape[1], px2)]
+                            
+                            # Gọi hàm OCR để đọc chữ
+                            if plate_crop.size > 0:
+                                plate_text = read_plate(plate_crop)
+                        
+                        # 4. Lưu hình ảnh xe vi phạm vào thư mục plate_crops
+                        error_str = "_".join(errors).replace(" ", "")
+                        img_name = f"plate_crops/ID{tid}_{error_str}_{plate_text}_f{frame_idx}.jpg"
+                        cv2.imwrite(img_name, car_crop) 
+                        
+                        print(f"[PHẠT NGUỘI] Xe ID {tid} | Lỗi: {error_str} | Biển số: {plate_text}")
+                    
+                    # 5. Khóa cờ lại để không chụp nháy liên tục ở các frame sau
+                    v['saved'] = True
+                # ======================================================================
 
             color = (0, 0, 255) if is_violating else (0, 255, 0)
             cv2.rectangle(display, (x1, y1), (x2, y2), color, 2)
@@ -369,7 +448,7 @@ def process_video(input_path, output_path="output_all_violations.avi"):
 
     cap.release()
     writer.release()
-    print(f"✅ HOÀN TẤT! Video: {output_path}")
+    print(f"HOÀN TẤT! Video: {output_path}")
 
 if __name__ == "__main__":
     process_video(VIDEO_NAME)
