@@ -1,139 +1,140 @@
 PHÂN TÍCH HỆ THỐNG CAMERA AI (EDGE AI) – THEO DÕI & PHẠT NGUỘI PHƯƠNG TIỆN GIAO THÔNG
-(Phiên bản Pro - Flexible ROI)
-Trạng thái hiện tại: Đang thực hiện Giai đoạn 4
+(Phiên bản Pro - Hybrid Edge-Server với MQTT Realtime - Flow Tối Ưu)
+Trạng thái hiện tại: Đang thực hiện Giai đoạn 4 (đã tích hợp MQTT làm giao thức chính)
 
 1. TỔNG QUAN HỆ THỐNG
-    Hệ thống được thiết kế theo kiến trúc Hybrid Edge-Server, nhằm tối ưu hiệu suất và khả năng mở rộng cho việc xử lý phạt nguội giao thông.
-    Mục tiêu chính:
-    Tách biệt hoàn toàn phần AI nặng (detection, tracking, violation logic) sang Edge (Jetson Nano). Server chỉ thực hiện các phần nhẹ: nhận kết quả, OCR cuối cùng, tra cứu database, lưu trữ và giao diện dashboard.
-    Phân vai rõ ràng:
+    Hệ thống được thiết kế theo kiến trúc Hybrid Edge-Server, sử dụng MQTT làm giao thức chính cho realtime communication, kết hợp REST cho một số tác vụ dữ liệu lớn.
+    
+    Mục tiêu cốt lõi:
+
+        Video được lưu sẵn và xử lý hoàn toàn trên Jetson Nano (Edge).
+        Dashboard chỉ đóng vai trò điều khiển, giám sát realtime và lưu trữ kết quả.
+        Tối ưu tốc độ, giảm tải hệ thống, dễ kết nối ngoại vi và dễ scale nhiều camera.
+
+Phân vai rõ ràng:
 
     Edge (Jetson Nano):
-    Chạy inference AI nặng (YOLOv12n + ByteTrack + Traffic Light model + Plate Detection).
-    Mode Real-time: Chỉ detect xe + đèn giao thông, stream live MJPEG về Server.
-    Mode Video: Xử lý đầy đủ violation logic (vượt đèn đỏ/vàng, đi ngược chiều, lấn làn, vào vùng cấm…), trích xuất ảnh xe + ảnh plate crop, gửi kết quả về Server.
+        Lưu trữ và xử lý toàn bộ video local.
+        Chạy AI nặng: YOLOv12n + ByteTrack, Traffic Light Detection, Data-driven Lane Detection, Violation Engine, Smart Capture.
+        Không chạy Plate Detection.
+        Publish stream MJPEG, heartbeat, violation packet và gói kết quả cuối cùng qua MQTT.
 
-    Server (Dashboard):
-    Nhận video upload từ người dùng, cho phép vẽ zones (light_zone, line, polygon) qua giao diện Konva.js, gửi gói video + zones sang Edge, nhận kết quả vi phạm từ Edge, chạy plate_model + EasyOCR + tra cứu owners_sample.csv, lưu trữ và hiển thị kết quả.
-
-Lợi ích:
-
-    Edge xử lý realtime, giảm tải và latency.
-    Server tập trung vào UI/UX và nghiệp vụ.
-    Dễ scale nhiều camera Jetson.
+    Server (FastAPI Dashboard):
+        Subscribe MQTT từ Edge để nhận dữ liệu realtime.
+        Tab Realtime Monitoring: Xem stream camera từ Edge, thống kê lượng phương tiện và trạng thái đèn giao thông.
+        Tab Video Processing: Chọn video có sẵn trên Edge để xử lý phạt nguội.
+        Nhận violation packet → chạy Plate Detection + OCR (module_utils).
+        Nhận gói kết quả cuối → lưu trữ + đồng bộ lên Cloud MongoDB Atlas.
 
 
-2. LUỒNG XỬ LÝ CHI TIẾT (End-to-End)
 
-Dưới đây là sơ đồ luồng xử lý chi tiết:
-
-'''
-
-                        LUỒNG XỬ LÝ SERVER - EDGE (Giai đoạn 4)
+2. LUỒNG XỬ LÝ CHI TIẾT (End-to-End với MQTT)
+    '''
+    text========================================================================================
+                        LUỒNG XỬ LÝ SERVER - EDGE VỚI MQTT (Tối ưu 2026)
     ========================================================================================
 
-    [ USER ] 
-    ↓ Upload video hoặc chọn camera thực tế
+    [ USER trên Dashboard ]
+    ↓ Chọn Jetson Nano → Chọn chế độ (Realtime Monitoring hoặc Video Processing)
 
     ────────────────────────────────────────────────────────────────────────────────────────
-                            SERVER (FastAPI + Dashboard)
+                            MQTT BROKER (HiveMQ Cloud / Mosquitto)
     ────────────────────────────────────────────────────────────────────────────────────────
-    1. Nhận video upload → Lưu tạm vào folder uploads
-        ↓
-    2. User vẽ zones (light_zone, violation lines, forbidden polygons) trên giao diện web (Konva)
-        ↓
-    3. Nhấn "Gửi xử lý Edge"
-        ↓
-    Gửi package qua REST API:
-    → Video file + zones JSON + mode ("video" hoặc "realtime") 
-    → Đến Jetson Nano tương ứng
-        ↓
+    Các Topic chính:
+    - control/{camera_id}/command     → Server publish lệnh điều khiển
+    - status/{camera_id}/heartbeat    → Edge publish stats + đèn + fps
+    - stream/{camera_id}/mjpeg        → Edge publish stream frame realtime
+    - violation/{camera_id}           → Edge publish ViolationPacket
+    - complete/{camera_id}            → Edge publish gói kết quả video xong
+
     ────────────────────────────────────────────────────────────────────────────────────────
-                            EDGE DEVICE (JETSON NANO)
+                            TAB REALTIME MONITORING
     ────────────────────────────────────────────────────────────────────────────────────────
-    4. Nhận package từ Server
+    1. Dashboard publish lệnh kết nối camera
+        ↓ MQTT control/{camera_id}/command
+    2. Edge:
+    - Bắt đầu stream từ camera gắn trên Edge (hoặc video mô phỏng)
+    - Chạy model phát hiện phương tiện → thống kê realtime (car, motorcycle, bus, truck)
+    - Phát hiện đèn giao thông → cập nhật trạng thái
+    - Publish stream MJPEG + heartbeat liên tục
         ↓
-    5. Chạy inference full (TensorRT):
-        ├── YOLOv12n Vehicle + Tracking (ByteTrack)
-        ├── Traffic Light Detection (theo light_zones)
-        ├── Plate Detection
-        └── Tự động xác định làn đường & hướng di chuyển
-        ↓
-    6. Violation Engine (chỉ khi mode=video):
-        ├── Vượt đèn đỏ/vàng
-        ├── Đi ngược chiều
-        ├── Lấn làn
-        ├── Vào vùng cấm
-        └── Vượt vạch dừng
-        ↓
-    Nếu phát hiện vi phạm:
-        ├── Crop ảnh xe + ảnh plate
-        ├── Gói thành packet (JSON metadata + 2 ảnh base64)
-        └── Gửi ngay về Server qua WebSocket
-        ↓
-    7. (Mode Real-time): 
-    → Chỉ stream MJPEG live + heartbeat (fps, stats xe, trạng thái đèn)
+    3. Dashboard subscribe và hiển thị:
+    - Luồng camera realtime
+    - Thống kê lượng phương tiện theo thời gian thực
+    - Trạng thái đèn giao thông
+    - Xử lý trực tiếp (không lưu vi phạm)
+
     ────────────────────────────────────────────────────────────────────────────────────────
-                            SERVER (Dashboard)
+                            TAB VIDEO PROCESSING
     ────────────────────────────────────────────────────────────────────────────────────────
-    8. Nhận packet vi phạm qua WebSocket
+    4. User chọn video có sẵn trên Edge + cấu hình zones
+        ↓ MQTT control/{camera_id}/command
+    5. Edge xử lý video:
+    - Load video từ thư mục local
+    - Chạy đầy đủ violation logic + smart capture + force fallback
+    - Publish stream quá trình xử lý realtime
+    - Khi có vi phạm → publish ViolationPacket (chứa vehicle_crop_base64)
+    - Khi xử lý xong toàn bộ video → publish gói kết quả hoàn chỉnh
         ↓
-    9. Xử lý nhẹ trên Server:
-        ├── Chạy plate_model + EasyOCR trên plate_crop (nếu cần tinh chỉnh)
-        ├── Tra cứu thông tin chủ xe từ owners_sample.csv
-        ├── Lưu violation hoàn chỉnh vào folder + Database
-        └── Push realtime lên giao diện Dashboard
-        ↓
-    10. Hiển thị:
-        ├── Danh sách xe đang theo dõi
-        ├── Danh sách vi phạm (có modal chi tiết ảnh + thông tin)
-        ├── Thống kê, Export CSV
-        └── Live stream từ Edge (nếu realtime)
+    6. Server (subscribe MQTT):
+    - Nhận violation packet → chạy plate_model + read_license_plate_vn() + tra cứu DB
+    - Lưu violation + đẩy lên Cloud MongoDB Atlas ngay lập tức
+    - Nhận gói complete → lưu video annotated + toàn bộ metadata vào MongoDB
     ========================================================================================
+    '''
 
-'''
-Hai Tab chính trên Dashboard:
-Tab Video Processing:
+3. Kiến trúc Kết nối & MQTT Design
+    MQTT là giao thức chính (ưu tiên cho tốc độ, giảm load và dễ kết nối ngoại vi):
 
-    User upload video → Server lưu tạm.
-    User vẽ zones qua Konva.
-    Nhấn “Gửi xử lý Edge” → Server gửi video + zones + mode=video qua REST đến Edge.
-    Edge xử lý full violation → gửi từng violation packet (JSON + 2 ảnh base64) qua WebSocket về Server.
-    Server nhận → chạy plate detection + EasyOCR + tra DB → lưu và hiển thị.
+        Control: control/{camera_id}/command — Lệnh từ Server sang Edge (start/stop, chọn video, cập nhật zones…)
+        Status: status/{camera_id}/heartbeat — Heartbeat + thống kê xe + đèn + fps
+        Stream: stream/{camera_id}/mjpeg — Stream frame realtime (annotated)
+        Violation: violation/{camera_id} — Violation packet realtime
+        Complete: complete/{camera_id} — Gói kết quả cuối cùng sau khi xử lý video
 
-Tab Real-time Monitoring:
+REST chỉ dùng cho:
 
-Chọn Jetson → hiển thị live stream MJPEG từ Edge.
-Nhận heartbeat stats (fps, lights, count xe…).
+    Upload gói kết quả video lớn (nếu MQTT không phù hợp)
+    Một số API config ban đầu hoặc fallback khi MQTT tạm mất
 
+Cloud MongoDB Atlas: Server tự động insert violation và metadata ngay khi nhận từ Edge qua MQTT.
 
-3. Kết nối Server - Edge
+Lợi ích khi dùng MQTT làm chính:
 
-Chính: REST API (gửi video + zones) + WebSocket (nhận violation realtime).
-Real-time stream: MJPEG stream từ Edge.
-Heartbeat: Edge gửi định kỳ stats qua WebSocket.
-Tương lai: Có thể bổ sung MQTT cho quản lý nhiều Edge.
+    Tốc độ realtime cao, latency thấp.
+    Giảm đáng kể tải CPU/network trên Jetson Nano.
+    Reconnect tự động, QoS đảm bảo không mất gói tin vi phạm.
+    Dễ scale thêm nhiều camera sau này.
+    Tiết kiệm băng thông so với REST polling.
 
 
 4. Mô tả mẫu dữ liệu
-    Packet Violation từ Edge → Server:
-    JSON{
+    ViolationPacket (Edge → Server qua MQTT):
+        JSON{
+        "camera_id": "JETSON_01",
         "mode": "video",
-        "timestamp": "2026-04-18T00:30:45+07:00",
-        "track_id": 156,
-        "violation_type": "VƯỢT ĐÈN ĐỎ (straight)",
-        "vehicle_crop_base64": "...",
-        "plate_crop_base64": "...",
-        "lane": 2,
-        "confidence": 0.93
-    }
-  "camera_id": "JETSON_01",
-  
+        "timestamp": "2026-04-18T16:45:12+07:00",
+        "track_id": 234,
+        "violation_type": "VUOT DEN DO + SAI LAN",
+        "lane": 3,
+        "direction": "straight",
+        "confidence": 0.94,
+        "vehicle_crop_base64": "base64_string..."
+        }
+    Heartbeat từ Edge:
+        JSON{
+        "camera_id": "JETSON_01",
+        "stats": {"car": 18, "motorcycle": 35, "bus": 4, "truck": 6},
+        "lights": {"left": "green", "straight": "red"},
+        "fps": 27.3,
+        "active_video": "video_test_01.mp4"
+        }
+
 5. Các bước cần thực hiện (Giai đoạn 4)
 
-    Hoàn thiện REST API trên Server để nhận và forward video + zones đến Edge.
-    Triển khai WebSocket receiver trên Server để nhận violation packet từ Edge.
-    Phát triển service trên Jetson Nano (nhận package, xử lý 2 mode: realtime & video).
-    Tích hợp gửi base64 ảnh + metadata từ Edge về Server.
-    Hoàn thiện logic plate final OCR + DB lookup trên Server.
-    Test end-to-end với video mô phỏng.
+    Hoàn thiện phân tích hệ thống với MQTT (đã xong).
+    Cài đặt MQTT Broker (HiveMQ Cloud khuyến nghị).
+    Viết edge/main_edge.py với MQTT Client (paho-mqtt) – hỗ trợ cả 2 tab.
+    Chỉnh sửa server/api_main.py để tích hợp MQTT Subscriber + MongoDB Atlas.
+    Cập nhật frontend (thêm chọn camera, nút điều khiển, hiển thị 2 Tab rõ ràng).
+    Test end-to-end: Realtime Monitoring, Video Processing, Violation realtime, Gói hoàn thành.
