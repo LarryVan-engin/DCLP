@@ -89,16 +89,27 @@ async def handle_mqtt_message(msg):
     topic = msg.topic
     payload = msg.payload.decode()
 
-    # 1. Xử lý Stream (MJPEG)
+    # Xử lý Stream (MJPEG)
     if "stream/" in topic:
-        current_stream_frame = payload # Nhận frame annotated từ Edge
+        current_stream_frame = payload 
     
-    # 2. Xử lý Heartbeat/Stats
-    elif "status/" in topic:
+    # Xử lý Heartbeat/Stats
+    elif "status/" in topic and "heartbeat" in topic:
         data = json.loads(payload)
         last_heartbeat[data['camera_id']] = data
 
-    # 3. Xử lý Violation (Quan trọng nhất)
+    # Xử lý Danh sách Video (Dành cho tính năng chọn file động)
+    elif "status/" in topic and "files" in topic:
+        try:
+            data = json.loads(payload)
+            files = data.get("files", [])
+            # Đẩy danh sách file qua WebSocket lên giao diện (Browser)
+            for ws in active_ws:
+                await ws.send_json({"type": "file_list", "files": files})
+        except Exception as e:
+            print(f"[SERVER] Lỗi parse file list: {e}")
+
+    # 4. Xử lý Violation (Quan trọng nhất)
     elif "violation/" in topic:
         data = json.loads(payload)
         await process_violation(data)
@@ -131,25 +142,33 @@ async def process_violation(data: dict):
 
         # Tra cứu chủ xe
         clean_plate = re.sub(r"[^A-Z0-9]", "", plate_text.upper())
-        owner_info = vehicle_db.get(clean_plate, {"owner": "Không xác định"})
+        owner_info = vehicle_db.get(clean_plate, {})
 
         # Lưu file cục bộ
-        file_name = f"{packet.camera_id}_{packet.track_id}_{packet.timestamp}.jpg"
+        file_name = f"{packet.camera_id}_{packet.track_id}_{packet.timestamp.replace(':', '-')}.jpg" # Sửa lại tên file tránh lỗi ký tự ":" trên Windows
         cv2.imwrite(os.path.join(VIOLATION_DIR, file_name), frame)
 
         # Chuẩn bị dữ liệu cuối cùng
         violation_doc = {
             **packet.dict(),
             "plate_read": plate_text,
-            "owner": owner_info.get("owner"),
+            "owner": owner_info.get("owner", "Không xác định"),
+            "phone": owner_info.get("phone", "N/A"),
+            "class_vehicle": owner_info.get("class_vehicle", "N/A"),
+            "province": owner_info.get("province", "N/A"),
+            "registration_date": owner_info.get("registration_date", "N/A"),
+            "id_card": owner_info.get("id_card", "N/A"),
             "plate_img_base64": plate_img_b64,
             "processed_at": datetime.now().isoformat()
         }
 
-        # 1. Lưu MongoDB Atlas
-        await violations_col.insert_one(violation_doc.copy())
+        # Lưu MongoDB Atlas
+        result = await violations_col.insert_one(violation_doc.copy())
 
-        # 2. Đẩy qua WebSocket lên UI
+        # Đẩy qua WebSocket lên UI (Phải bỏ ObjectId đi vì JSON không serialize được)
+        if "_id" in violation_doc:
+            del violation_doc["_id"]
+            
         for ws in active_ws:
             await ws.send_json({"type": "violation", "data": violation_doc})
 

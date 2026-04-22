@@ -3,11 +3,13 @@
 Project:      Traffic Violation Detection (Pro Version - MQTT Hybrid)
 File:         edge/utils/violation_engine.py
 Description:  Động cơ kiểm tra vi phạm đa luồng (Hỗ trợ bắt Combo nhiều lỗi cùng lúc).
+              Đã tối ưu hóa hiệu năng (đưa import ra ngoài) và chuẩn hóa logic Đường Cấm.
 ********************************************************************************************************************
 """
 
 import sys
 import os
+import numpy as np  # Chuyển import lên đầu file để cứu FPS cho Jetson Nano
 from typing import List, Tuple, Dict
 from collections import defaultdict
 
@@ -25,7 +27,7 @@ class ViolationEngine:
         # Bộ nhớ theo dõi Combo lỗi: { track_id: set("VƯỢT ĐÈN ĐỎ", "SAI LÀN", ...) }
         self.recorded_violations = defaultdict(set)
         
-        # Bộ nhớ chờ xác nhận rẽ phải
+        # Bộ nhớ chờ xác nhận rẽ phải (Tránh bắt nhầm xe rẽ phải khi đèn đỏ)
         self.pending_red_lights = {}
 
     def check_violations(self, 
@@ -49,11 +51,13 @@ class ViolationEngine:
             suspect_data = self.pending_red_lights[track_id]
             suspect_data["frames_waited"] += 1
             
+            # Đợi 15 frame để xem xe đi thẳng hay rẽ phải
             if suspect_data["frames_waited"] >= 15:
                 start_p = suspect_data["cross_point"]
                 dx = bottom_center[0] - start_p[0]
                 dy = bottom_center[1] - start_p[1]
                 
+                # Logic rẽ phải: Trục X thay đổi nhiều hơn trục Y
                 is_turning_right = dx > 15 and dx > abs(dy) * 0.35
                 
                 if not is_turning_right:
@@ -86,32 +90,33 @@ class ViolationEngine:
                 self.recorded_violations[track_id].add("ĐI NGƯỢC CHIỀU")
 
         # =================================================================
-        # LUẬT 3: ĐI VÀO VÙNG CẤM / SAI LÀN USER VẼ
+        # LUẬT 3: SAI LÀN (Do User tự vẽ thủ công)
         # =================================================================
         if "SAI LÀN" not in self.recorded_violations[track_id]:
             for poly_zone in zones_config.get("polygons", []):
-                if poly_zone.label in ["forbidden", "wrong_lane"]:
-                    import numpy as np
+                if poly_zone.label == "wrong_lane":
                     pts = np.array([[p.x, p.y] for p in poly_zone.points], np.int32).reshape((-1, 1, 2))
                     if is_point_in_polygon(bottom_center, pts):
-                        detected_new_violations.append("SAI LÀN ")
+                        detected_new_violations.append("SAI LÀN")
                         self.recorded_violations[track_id].add("SAI LÀN")
-                        break # Đã ghi nhận sai làn ở vùng này thì bỏ qua các vùng khác
+                        break 
 
-        # Kiểm tra vùng Forbidden (Đường cấm)
-        for poly_zone in zones_config.get("polygons", []):
-            if poly_zone.label == "forbidden":
-                import numpy as np
-                pts = np.array([[p.x, p.y] for p in poly_zone.points], np.int32).reshape((-1, 1, 2))
-                
-                if is_point_in_polygon(bottom_center, pts):
-                    if "ĐI VÀO ĐƯỜNG CẤM" not in self.recorded_violations[track_id]:
+        # =================================================================
+        # LUẬT 4: ĐI VÀO ĐƯỜNG CẤM (Forbidden Mode)
+        # =================================================================
+        if "ĐI VÀO ĐƯỜNG CẤM" not in self.recorded_violations[track_id]:
+            for poly_zone in zones_config.get("polygons", []):
+                if poly_zone.label == "forbidden":
+                    pts = np.array([[p.x, p.y] for p in poly_zone.points], np.int32).reshape((-1, 1, 2))
+                    if is_point_in_polygon(bottom_center, pts):
                         detected_new_violations.append("ĐI VÀO ĐƯỜNG CẤM")
                         self.recorded_violations[track_id].add("ĐI VÀO ĐƯỜNG CẤM")
+                        break
 
         # Trả về các lỗi VỪA MỚI PHÁT HIỆN để main_edge gửi MQTT
         return detected_new_violations
 
     def reset(self):
+        """Xóa trắng bộ nhớ khi chuyển đổi video hoặc reset hệ thống"""
         self.recorded_violations.clear()
         self.pending_red_lights.clear()

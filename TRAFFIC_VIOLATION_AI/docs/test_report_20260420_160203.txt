@@ -1,0 +1,53 @@
+================================================================================
+BÁO CÁO KẾT QUẢ KIỂM THỬ STANDALONE TEST AUTOMATION
+================================================================================
+Ngày thực hiện: 20/04/2026 16:02:03
+Hệ thống: Traffic Violation AI - Standalone Testing
+Trạng thái tài liệu: Bản chính thức (Final)
+
+┌─ TÓM TẮT TỔNG THỂ  ─────────────────────────────┐
+│ Tổng số Test Case:                            9 │
+│ ✅ PASS:                                      7 │
+│ ❌ FAIL:                                      2 │
+│ ⏭️  SKIP:                                     0 │
+│ 📊 Tỷ lệ Pass:                            77.8% │
+│ ⏱️  Tổng thời gian:                       0.08s │
+└─────────────────────────────────────────────────┘
+
+┌─ CHI TIẾT TỪNG TEST CASE ──────────────────────┐
+│ ID       │ Name                 │ Status   │ Duration   │
+├─────────┼────────────────────┼──────────┼────────────┤
+│ S-ED-01 │ Khởi tạo và Tracking │ ✅ PASS  │    0.004s │
+│ S-ED-02 │ Học làn tự động (Auto-ROI) │ ✅ PASS  │    0.012s │
+│ S-ED-03 │ Check Rò rỉ bộ nhớ (RAM) │ ❌ FAIL  │    0.009s │
+│ S-ED-04 │ Smart Crop & Mã hóa Base64 │ ✅ PASS  │    0.016s │
+│ S-ED-05 │ Violation Engine Logic │ ❌ FAIL  │    0.026s │
+│ S-SV-01 │ Xử lý luồng OCR      │ ✅ PASS  │    0.000s │
+│ S-SV-02 │ Tra cứu DB CSV       │ ✅ PASS  │    0.011s │
+│ S-SV-03 │ Lưu MongoDB Atlas    │ ✅ PASS  │    0.001s │
+│ S-SV-04 │ Giao tiếp WebSocket  │ ✅ PASS  │    0.005s │
+└─────────┴────────────────────┴──────────┴────────────┘
+
+┌─ LỖICHIẾT TỰ VÀ PHÂN TÍCH ─────────────────────┐
+
+❌ TEST CASE: S-ED-03 - Check Rò rỉ bộ nhớ (RAM)
+   Thời gian thực hiện: 0.009s
+   Lỗi: Lỗi kiểm tra memory: No module named 'pydantic'
+   Chi tiết: {
+      "exception": "No module named 'pydantic'"
+}
+
+❌ TEST CASE: S-ED-05 - Violation Engine Logic
+   Thời gian thực hiện: 0.026s
+   Lỗi: Lỗi violation engine: No module named 'pydantic'
+   Chi tiết: {
+      "exception": "No module named 'pydantic'"
+}
+└────────────────────────────────────────────────┘
+
+┌─ KHUYẾN NGHỊ ──────────────────────────────────┐
+│ ❌ Có nhiều lỗi cần fix. KHÔNG nên tích hợp   │
+│    cho đến khi pass rate >= 90%.               │
+└────────────────────────────────────────────────┘
+
+================================================================================

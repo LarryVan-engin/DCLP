@@ -55,7 +55,7 @@ CONF_TRAFFIC_LIGHT = 0.45
 
 # Cấu hình Smart Capture
 SMART_CROP_PADDING = 40        # Số pixel mở rộng khi cắt ảnh vi phạm
-JPEG_ENCODE_QUALITY = 85       # Chất lượng nén ảnh gửi qua MQTT (1-100)
+JPEG_ENCODE_QUALITY = 98       # Chất lượng nén ảnh gửi qua MQTT (1-100)
 STREAM_JPEG_QUALITY = 50       # Chất lượng nén cho luồng Realtime (giảm để mượt)
 STREAM_RESOLUTION = (640, 360) # Độ phân giải luồng Realtime đẩy lên Dashboard
 

@@ -44,6 +44,45 @@ model_vehicle = YOLO(cfg.YOLO_VEHICLE_MODEL)
 model_traffic_light = YOLO(cfg.YOLO_LIGHT_MODEL) 
 
 # ====================== HELPERS ======================
+def parse_light_status(frame, light_model):
+    """
+    Hàm nhận diện màu đèn giao thông.
+    Tối ưu Jetson Nano: Chỉ crop nửa trên màn hình (Top-half) để tiết kiệm 50% sức mạnh tính toán.
+    """
+    h, w = frame.shape[:2]
+    # Cắt nửa trên của frame
+    top_half = frame[0:int(h/2), 0:w]
+    
+    # Chạy AI với ngưỡng tự động lấy từ edge_config.py
+    results = light_model(top_half, conf=cfg.CONF_TRAFFIC_LIGHT, verbose=False)[0]
+    
+    # Nếu không thấy đèn nào
+    if results.boxes is None or len(results.boxes) == 0:
+        return "unknown"
+        
+    best_conf = 0
+    best_color = "unknown"
+    
+    # Lặp qua các đèn tìm thấy để lấy đèn rõ nhất
+    for box in results.boxes:
+        conf = float(box.conf[0])
+        cls_id = int(box.cls[0])
+        
+        if conf > best_conf:
+            best_conf = conf
+            # Lấy tên class (VD: 'Red', 'Green', 'Yellow') và chuyển về chữ thường
+            label = results.names[cls_id].lower() 
+            
+            # Map kết quả
+            if "red" in label:
+                best_color = "red"
+            elif "green" in label:
+                best_color = "green"
+            elif "yellow" in label:
+                best_color = "yellow"
+                
+    return best_color
+
 def publish_violation(client, track_id, violation_type, vehicle_crop, conf):
     """Đóng gói và gửi ViolationPacket"""
     packet = {
@@ -91,8 +130,9 @@ def ai_processing_loop(client):
             break
             
         frame_count += 1
-        
-        current_light = parse_light_status(frame, model_traffic_light)
+
+        if frame_count % 3 == 1:
+            current_light = parse_light_status(frame, model_traffic_light)
         
         # 2. AI Inference & Tracking
         results = model_vehicle.track(frame, persist=True, tracker=cfg.TRACKER_CONFIG, verbose=False)[0]
@@ -132,57 +172,43 @@ def ai_processing_loop(client):
                 
                 new_violations_list = [] # Khởi tạo danh sách lỗi trống cho mỗi xe
                 
-                if is_forbidden_mode:
-                    # ==========================================
-                    # CHẾ ĐỘ ĐƯỜNG CẤM (FORBIDDEN MODE)
-                    # ==========================================
-                    # Chỉ check lỗi đi vào vùng cấm (Forbidden)
-                    new_errors = violation_engine.check_violations(
-                        track_id=track_id, bbox=[x1, y1, x2, y2], 
-                        trajectory=path, light_status=current_light, 
-                        zones_config={"polygons": forbidden_zones} # Chỉ truyền vùng cấm
-                    )
-                    # Lọc đúng lỗi đường cấm
-                    new_violations_list = [e for e in new_errors if "ĐƯỜNG CẤM" in e]
-                
-                else:
-                    # ==========================================
-                    # CHẾ ĐỘ ĐƯỜNG BÌNH THƯỜNG (NORMAL MODE)
-                    # ==========================================
-                    # 1. Học phân làn tự động
-                    if not lane_detector.is_ready:
-                        lane_detector.update_learning_data(boxes, classes)
-                        
-                    # 2. Check lỗi luật (Vượt đèn, ngược chiều...) từ Engine
-                    new_violations_list = violation_engine.check_violations(
-                        track_id=track_id, bbox=[x1, y1, x2, y2], 
-                        trajectory=path, light_status=current_light, 
-                        zones_config=zones_config
-                    )
-
-                # --- LOGIC VI PHẠM (Chỉ chạy ở Mode Video) ---
+                # --- LOGIC VI PHẠM (Chỉ xử phạt ở Mode Video hoặc có yêu cầu) ---
                 if current_mode == "video":
-                    # Trả về list các lỗi vi phạm (có thể nhiều lỗi cùng lúc)
-                    new_violations_list = violation_engine.check_violations(
-                        track_id = track_id,
-                        bbox = [x1, y1, x2, y2],
-                        trajectory = path,
-                        light_status = {"straight": "red"},
-                        zones_config = zones_config
-                    )
-                    # ========================================================
-                    #  CHECK THÊM SAI LÀN AI TỰ ĐỘNG
-                    # ========================================================
-                    if lane_detector.is_ready:
-                        if lane_detector.check_wrong_lane([x1, y1, x2, y2], cls):
-                            if "SAI LÀN" not in violation_engine.recorded_violations.get([track_id]):
-                                new_violations_list.append("SAI LÀN")
-                                violation_engine.recorded_violations.setdefault([track_id]).append("SAI LÀN")
+                    if is_forbidden_mode:
+                        # ==========================================
+                        # CHẾ ĐỘ ĐƯỜNG CẤM (FORBIDDEN MODE)
+                        # ==========================================
+                        new_errors = violation_engine.check_violations(
+                            track_id=track_id, bbox=[x1, y1, x2, y2], 
+                            trajectory=path, light_status={"straight": current_light}, 
+                            zones_config={"polygons": forbidden_zones} 
+                        )
+                        new_violations_list = [e for e in new_errors if "ĐƯỜNG CẤM" in e]
                     
-                    # Nếu có lỗi -> Smart Capture & Publish MQTT
+                    else:
+                        # ==========================================
+                        # CHẾ ĐỘ ĐƯỜNG BÌNH THƯỜNG (NORMAL MODE)
+                        # ==========================================
+                        if not lane_detector.is_ready: # Sửa lỗi gọi hàm ()
+                            lane_detector.update_learning_data(boxes, classes)
+                            
+                        new_violations_list = violation_engine.check_violations(
+                            track_id=track_id, bbox=[x1, y1, x2, y2], 
+                            trajectory=path, light_status={"straight": current_light}, 
+                            zones_config=zones_config
+                        )
+                        
+                        # CHECK THÊM SAI LÀN AI TỰ ĐỘNG
+                        if lane_detector.is_ready:
+                            if lane_detector.check_wrong_lane([x1, y1, x2, y2], cls):
+                                # Sửa lỗi Hashable List và dùng hàm .add()
+                                if "SAI LÀN" not in violation_engine.recorded_violations[track_id]:
+                                    new_violations_list.append("SAI LÀN")
+                                    violation_engine.recorded_violations[track_id].add("SAI LÀN")
+                    
+                    # NẾU CÓ LỖI -> SMART CAPTURE & PUBLISH MQTT
                     if len(new_violations_list) > 0:
                         combo_violation_string = "+".join(new_violations_list)
-
                         crop_img = smart_crop(frame, box, padding=cfg.SMART_CROP_PADDING)
                         publish_violation(client, track_id, combo_violation_string, crop_img, conf)
                         total_violations += 1
@@ -250,7 +276,7 @@ def on_message(client, userdata, msg):
 
             if action == "list_files":
                 files = [f for f in os.listdir(cfg.VIDEOS_DIR) if f.endswith(('.mp4', '.avi'))]
-                client.publish(f"status/{CAMERA_ID}/files", json.dumps({"files": files}))
+                client.publish(f"status/{cfg.CAMERA_ID}/files", json.dumps({"files": files}))
 
             if action == "start":
                 if not is_running:
