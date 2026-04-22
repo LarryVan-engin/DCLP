@@ -107,16 +107,17 @@ def ocr_single(img_bw):
     return post_process_text(text), conf
 
 # =====================================================================
-# FORMAT HELPERS
+# FORMAT HELPERS (Cập nhật thêm Safety Check)
 # =====================================================================
 def format_motor_2line(top4: str, bottom_digits: str) -> str:
+    if len(top4) < 3: return f"{top4} - {bottom_digits}" # Tránh lỗi index
     prefix = top4[:2]
     series = top4[2:]
     if len(bottom_digits) >= 5:
         num = f"{bottom_digits[:3]}.{bottom_digits[3:5]}"
     else:
         num = bottom_digits
-    return f"{prefix} - {series} {num}"
+    return f"{prefix}-{series} {num}"
 
 def format_car_2line(top3: str, bottom_digits: str) -> str:
     if len(bottom_digits) >= 5:
@@ -126,11 +127,15 @@ def format_car_2line(top3: str, bottom_digits: str) -> str:
     return f"{top3} {num}"
 
 def format_car_1line(clean_digits: str) -> str:
+    # Check an toàn trước khi cắt chuỗi
+    if len(clean_digits) < 4: return clean_digits
+    
     prefix = clean_digits[:3]
     rest = clean_digits[3:]
     if len(rest) >= 5:
         rest = f"{rest[:3]}.{rest[3:5]}"
     return f"{prefix}-{rest}"
+
 
 # =====================================================================
 # OCR TWO-LINE (BEST SCORE)

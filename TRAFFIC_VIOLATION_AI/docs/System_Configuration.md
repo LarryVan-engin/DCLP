@@ -49,3 +49,6 @@ TRAFFIC_VIOLATION_AI/
 │
 ├── README.md                      # Hướng dẫn cài đặt project
 └── .gitignore                     # Bỏ qua các file rác, __pycache__, thư mục ảo...
+
+![alt text](image.png)
+
