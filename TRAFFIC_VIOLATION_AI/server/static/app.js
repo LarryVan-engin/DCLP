@@ -9,6 +9,9 @@
 let socket;
 let stage, layer;
 let violationHistory = {}; // Chuyển thành Object để dễ truy xuất theo trackId
+let pendingVideoStart = null;
+let lastStartPayload = null;
+let isStopped = false;
 const streamImg = document.getElementById('mjpeg-stream');
 const streamPlaceholder = document.getElementById('stream-placeholder');
 const connectionBadge = document.getElementById('connection-status');
@@ -46,9 +49,16 @@ function connectWebSocket() {
             handleNewViolation(message.data);
         } else if (message.type === "file_list") {
             updateVideoSelect(message.files);
+        } else if (message.type === "camera_list") {
+            updateCameraSelect(message.cameras);
         } else if (message.type === "auto_roi_proposal") {
             // Nhận tọa độ đề xuất từ AI và vẽ lên màn hình để chỉnh sửa
             loadAutoROI(message.points);
+            pendingVideoStart = {
+                action: "start",
+                mode: "video",
+                video_name: message.video_name || document.getElementById('video-file-select').value
+            };
             logSystem("🤖 AI đã đề xuất vùng giám sát (Auto-ROI). Hãy kéo thả để tinh chỉnh.");
         }
     };
@@ -64,6 +74,32 @@ function connectWebSocket() {
 // ==========================================
 // 2. XỬ LÝ LUỒNG STREAM & STATS
 // ==========================================
+function updateCameraSelect(cameras) {
+    const select = document.getElementById('camera-select');
+    const currentValue = select.value;
+    
+    select.innerHTML = "";
+    
+    if (!cameras || cameras.length === 0) {
+        let opt = document.createElement('option');
+        opt.value = "";
+        opt.disabled = true;
+        opt.selected = true;
+        opt.text = "⏳ Chờ kết nối từ Edge...";
+        select.appendChild(opt);
+        logSystem("⚠️ Chưa có Edge device kết nối. Vui lòng bật Jetson hoặc camera AI.");
+    } else {
+        cameras.forEach((camera, index) => {
+            let opt = document.createElement('option');
+            opt.value = camera.id;
+            opt.text = `${camera.id} (${camera.location || 'Chưa cấu hình vị trí'})`;
+            if (index === 0) opt.selected = true;
+            select.appendChild(opt);
+        });
+        logSystem(`✅ Đã phát hiện ${cameras.length} camera Edge. Sẵn sàng để điều khiển.`);
+    }
+}
+
 function updateVideoSelect(files) {
     const select = document.getElementById('video-file-select');
     select.innerHTML = "";
@@ -92,12 +128,13 @@ function handleRealtimeStream(data) {
         document.getElementById('fps-counter').innerText = `FPS: ${heartbeat.fps}`;
 
         const lightBadge = document.getElementById('stat-light');
-        const lightColor = heartbeat.lights.straight.toLowerCase();
+        const lightColor = ((heartbeat.lights && heartbeat.lights.straight) || "unknown").toLowerCase();
         lightBadge.innerText = lightColor.toUpperCase();
         
         if (lightColor === 'red') lightBadge.className = "badge bg-danger";
         else if (lightColor === 'green') lightBadge.className = "badge bg-success";
         else if (lightColor === 'yellow') lightBadge.className = "badge bg-warning text-dark";
+        else lightBadge.className = "badge bg-secondary";
     }
 }
 
@@ -119,7 +156,7 @@ function handleNewViolation(violation) {
             <span class="violation-time">${new Date(violation.timestamp).toLocaleTimeString()}</span>
         </div>
         <div class="violation-plate">${violation.plate_read || 'CHƯA ĐỌC ĐƯỢC BIỂN SỐ'}</div>
-        <div class="small text-muted mb-1">ID Xe: ${violation.track_id} | Chủ xe: ${violation.owner || 'N/A'}</div>
+        <div class="small text-muted mb-1">ID Xe: ${violation.track_id} | ChÃ¡Â»Â§ xe: ${violation.owner || 'N/A'}</div>
         <img src="data:image/jpeg;base64,${violation.vehicle_crop_base64}" alt="Violation Crop">
     `;
     list.prepend(card);
@@ -130,21 +167,31 @@ function openViolationModal(trackId) {
     const v = violationHistory[trackId];
     if (!v) return;
 
-    document.getElementById('modal-id').innerText = `#${trackId}`;
-    document.getElementById('modal-type').innerText = v.violation_type;
-    document.getElementById('modal-plate-text').innerText = v.plate_read || "CHƯA ĐỌC ĐƯỢC";
-    document.getElementById('modal-owner').innerText = v.owner;
-    document.getElementById('m-phone').innerText = v.phone;
-    document.getElementById('m-class').innerText = v.class_vehicle; // Lấy đúng "Xe chuyên dụng"
-    document.getElementById('m-province').innerText = v.province;
-    document.getElementById('m-date').innerText = v.registration_date;
-    document.getElementById('m-id').innerText = v.id_card; // Khớp với cột id_card trong CSV
-    document.getElementById('modal-time').innerText = new Date(v.timestamp).toLocaleTimeString();
-    document.getElementById('modal-camera').innerText = v.camera_id || "JETSON_01";
+    const setText = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.innerText = value || "N/A";
+    };
+
+    setText('modal-id', `#${trackId}`);
+    setText('modal-type', v.violation_type);
+    setText('modal-plate-text', v.plate_read || "CHUA DOC DUOC");
+    setText('modal-owner', v.owner);
+    setText('modal-phone', v.phone);
+    setText('modal-class', v.class_vehicle);
+    setText('modal-province', v.province);
+    setText('modal-registration-date', v.registration_date);
+    setText('modal-id-card', v.id_card);
+    setText('modal-time', new Date(v.timestamp).toLocaleTimeString());
+    setText('modal-camera', v.camera_id || "JETSON_01");
 
     document.getElementById('modal-img-context').src = `data:image/jpeg;base64,${v.vehicle_crop_base64}`;
+    const plateImg = document.getElementById('modal-img-plate');
     if (v.plate_img_base64) {
-        document.getElementById('modal-img-plate').src = `data:image/jpeg;base64,${v.plate_img_base64}`;
+        plateImg.style.display = 'inline-block';
+        plateImg.src = `data:image/jpeg;base64,${v.plate_img_base64}`;
+    } else {
+        plateImg.style.display = 'none';
+        plateImg.removeAttribute('src');
     }
 
     const modalElement = document.getElementById('violationModal');
@@ -160,9 +207,9 @@ function closeViolationModal() {
 // 2. KONVA.JS - TINH CHỈNH AUTO-ROI (KHÔNG VẼ TỰ DO)
 // ==========================================
 function initKonva() {
-    const container = document.getElementById('canvas-container');
+    const container = document.getElementById('roi-canvas');
     stage = new Konva.Stage({
-        container: 'canvas-container',
+        container: 'roi-canvas',
         width: container.offsetWidth || 800,
         height: container.offsetHeight || 450
     });
@@ -179,8 +226,57 @@ function initKonva() {
     resizeObserver.observe(streamImg);
 }
 
+function syncStageToStream() {
+    if (!stage) return;
+    const canvas = document.getElementById('roi-canvas');
+    const streamContainer = document.getElementById('stream-container');
+    const streamBox = streamContainer.getBoundingClientRect();
+    const imgBox = streamImg.getBoundingClientRect();
+    const boxWidth = imgBox.width || streamBox.width || 800;
+    const boxHeight = imgBox.height || streamBox.height || 450;
+    const naturalWidth = streamImg.naturalWidth || 640;
+    const naturalHeight = streamImg.naturalHeight || 360;
+    const imgAspect = naturalWidth / Math.max(naturalHeight, 1);
+    const boxAspect = boxWidth / Math.max(boxHeight, 1);
+
+    let width = boxWidth;
+    let height = boxHeight;
+    let left = imgBox.left - streamBox.left;
+    let top = imgBox.top - streamBox.top;
+
+    if (boxAspect > imgAspect) {
+        width = boxHeight * imgAspect;
+        left += (boxWidth - width) / 2;
+    } else {
+        height = boxWidth / imgAspect;
+        top += (boxHeight - height) / 2;
+    }
+
+    canvas.style.left = `${left}px`;
+    canvas.style.top = `${top}px`;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    stage.width(width);
+    stage.height(height);
+    layer.draw();
+}
+
+streamImg.onload = syncStageToStream;
+
 // Xóa tất cả và load ROI do AI đề xuất
 function loadAutoROI(normalizedPointsArray) {
+    syncStageToStream();
+    const canvas = document.getElementById('roi-canvas');
+    if (canvas) canvas.style.display = 'block';
+    if (layer) layer.visible(true);
+    if (!normalizedPointsArray || normalizedPointsArray.length !== 4) {
+        normalizedPointsArray = [
+            { x: 0.1, y: 0.3 },
+            { x: 0.9, y: 0.3 },
+            { x: 1.0, y: 1.0 },
+            { x: 0.0, y: 1.0 }
+        ];
+    }
     layer.destroyChildren(); // Xóa sạch hình cũ
     
     const w = stage.width();
@@ -257,69 +353,152 @@ function toggleForbiddenMode() {
 }
 
 function toggleROILayer() {
-    if(layer) {
-        layer.visible(!layer.visible());
-        layer.draw();
-        logSystem(layer.visible() ? "👁️ Đã hiển thị khung ROI." : "🙈 Đã ẩn khung ROI.");
-    }
+    const canvas = document.getElementById('roi-canvas');
+    if (!canvas || !layer) return;
+
+    const nextVisible = canvas.style.display === 'none';
+    canvas.style.display = nextVisible ? 'block' : 'none';
+    layer.visible(nextVisible);
+    layer.draw();
+    logSystem(nextVisible ? "Da hien thi khung ROI." : "Da an khung ROI.");
 }
 
-function resetROI() {
-    // Gửi lệnh yêu cầu AI ở Edge học lại ROI từ đầu
-    const cameraId = document.getElementById('camera-select').value;
-    fetch(`/api/control_edge?camera_id=${cameraId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: "reset_roi" })
-    }).then(() => logSystem("🔄 Đã yêu cầu AI học lại ROI từ đầu."));
-}
-
-function saveROI() {
+function getCurrentROIPayload() {
     const isForbidden = document.getElementById('chk-forbidden') ? document.getElementById('chk-forbidden').checked : false;
     const targetId = isForbidden ? '#forbidden_zone' : '#roi_lane';
-    const poly = layer.findOne(targetId);
+    const poly = layer && layer.findOne(targetId);
 
-    if (!poly) return alert("❌ Chưa có vùng ROI nào do AI đề xuất!");
+    if (!poly) return null;
 
     const rawPoints = poly.points();
     const w = stage.width();
     const h = stage.height();
-    
-    // Quy đổi lại tỷ lệ 0.0 -> 1.0 kèm định dạng chuẩn {x: val, y: val} cho Python
-    let normalizedPoints = [];
+    const normalizedPoints = [];
+
     for (let i = 0; i < rawPoints.length; i += 2) {
         normalizedPoints.push({
             x: Number((rawPoints[i] / w).toFixed(4)),
-            y: Number((rawPoints[i+1] / h).toFixed(4))
+            y: Number((rawPoints[i + 1] / h).toFixed(4))
         });
     }
 
-    // Đóng gói JSON chính xác như Python mong muốn
-    const payload = {
-        action: "update_zones",
+    return {
+        roi: normalizedPoints.map(p => [p.x, p.y]),
         polygons: [{
             label: isForbidden ? "forbidden" : "roi_lane",
             points: normalizedPoints
         }],
         lines: [{
             label: "stop_line",
-            points: [normalizedPoints[0], normalizedPoints[1]] // Hai điểm đầu tiên làm vạch dừng
+            points: [normalizedPoints[0], normalizedPoints[1]]
         }]
     };
+}
 
-    fetch(`/api/control_edge?camera_id=JETSON_NANO_01`, { // Thay bằng biến camera thực tế nếu có
+function resetROI() {
+    const cameraId = document.getElementById('camera-select').value;
+    const selectedVideoName = document.getElementById('video-file-select').value;
+    const videoName = (lastStartPayload && lastStartPayload.video_name) ||
+        (pendingVideoStart && pendingVideoStart.video_name) ||
+        selectedVideoName;
+    const resetMode = (pendingVideoStart && pendingVideoStart.mode === "video") ||
+        (lastStartPayload && lastStartPayload.mode === "video") ? "video" : "realtime";
+
+    if (layer) {
+        layer.destroyChildren();
+        layer.draw();
+    }
+
+    pendingVideoStart = resetMode === "video"
+        ? { action: "start", mode: "video", video_name: videoName }
+        : null;
+    lastStartPayload = null;
+    violationHistory = {};
+    setStopButton(false);
+    document.getElementById('violation-list').innerHTML =
+        '<div class="text-center text-muted mt-5 small">Đang chờ dữ liệu...</div>';
+    document.getElementById('stat-car').innerText = "0";
+    document.getElementById('stat-motorcycle').innerText = "0";
+    document.getElementById('fps-counter').innerText = "FPS: 0";
+
+    fetch(`/api/control_edge?camera_id=${cameraId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: "reset_roi", mode: resetMode, video_name: videoName })
+    }).then(() => {
+        if (resetMode === "video") {
+            logSystem("Da dung video dang xu ly, xoa buffer ROI cu va quay lai buoc preview ROI.");
+        } else {
+            logSystem("Da xoa ROI cu va reset ROI ve mac dinh.");
+        }
+    }).catch((error) => logSystem(`Loi reset ROI: ${error}`));
+}
+
+function setStopButton(stopped) {
+    const btn = document.getElementById('stop-continue-btn');
+    if (!btn) return;
+    isStopped = stopped;
+    btn.innerText = stopped ? "TIẾP TỤC" : "DỪNG TẤT CẢ";
+    btn.className = stopped ? "btn btn-success btn-sm w-100 border-2 fw-bold" : "btn btn-outline-dark btn-sm w-100 border-2 fw-bold";
+}
+
+function saveROI() {
+    const cameraId = document.getElementById('camera-select').value;
+    const roiPayload = getCurrentROIPayload();
+
+    if (!roiPayload) return alert("Chua co ROI de luu. Hay chay preview video truoc.");
+
+    const payload = pendingVideoStart
+        ? { ...pendingVideoStart, ...roiPayload }
+        : { action: "update_zones", mode: "realtime", ...roiPayload };
+
+    fetch(`/api/control_edge?camera_id=${cameraId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
-    }).then(() => {
-        logSystem(`✅ Đã đồng bộ ROI mới [${isForbidden ? 'ĐƯỜNG CẤM' : 'BÌNH THƯỜNG'}] xuống Edge AI.`);
-        alert("Lưu cấu hình thành công!");
-    });
+    }).then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        lastStartPayload = payload.action === "start" ? payload : lastStartPayload;
+        pendingVideoStart = null;
+        setStopButton(false);
+        logSystem("Da luu ROI va ap dung xuong Edge.");
+        alert("Luu cau hinh thanh cong!");
+    }).catch((error) => logSystem(`Loi luu ROI: ${error}`));
+}
+
+async function toggleStopContinue() {
+    if (isStopped) {
+        if (lastStartPayload) {
+            try {
+                await sendPayload(lastStartPayload);
+                setStopButton(false);
+                logSystem("Da gui lenh tiep tuc xu ly.");
+            } catch (error) {
+                logSystem(`Loi gui lenh tiep tuc: ${error}`);
+            }
+        } else {
+            await sendControl("start", "realtime");
+        }
+    } else {
+        await sendControl("stop");
+    }
 }
 
 // ==========================================
 // 5. ĐIỀU KHIỂN & TIỆN ÍCH
 // ==========================================
+async function sendPayload(payload) {
+    const cameraId = document.getElementById('camera-select').value;
+    const response = await fetch(`/api/control_edge?camera_id=${cameraId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response;
+}
+
 async function sendControl(action, mode = 'realtime') {
     const cameraId = document.getElementById('camera-select').value;
     const videoName = document.getElementById('video-file-select').value;
@@ -330,22 +509,34 @@ async function sendControl(action, mode = 'realtime') {
         video_name: (mode === 'video') ? videoName : null
     };
 
-    try {
-        const response = await fetch(`/api/control_edge?camera_id=${cameraId}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
+    if (action === 'start' && mode === 'video') {
+        payload.action = 'preview_video';
+        pendingVideoStart = { action: 'start', mode: 'video', video_name: videoName };
+        lastStartPayload = null;
+        setStopButton(false);
+        if (layer) {
+            layer.destroyChildren();
+            layer.draw();
+        }
+        logSystem("Dang doc 5 frame dau de hieu chinh ROI truoc khi xu ly video...");
+    }
 
-        if (response.ok) {
-            logSystem(`Lệnh [${action.toUpperCase()}] đã gửi tới ${cameraId} thành công.`);
-            if (action === 'stop') {
-                streamImg.style.display = 'none';
-                streamPlaceholder.style.display = 'block';
-            }
+    try {
+        await sendPayload(payload);
+        logSystem(`Lenh [${payload.action.toUpperCase()}] da gui toi ${cameraId} thanh cong.`);
+
+        if (action === 'start' && mode !== 'video') {
+            lastStartPayload = payload;
+            setStopButton(false);
+        }
+
+        if (action === 'stop') {
+            setStopButton(true);
+            streamImg.style.display = 'none';
+            streamPlaceholder.style.display = 'block';
         }
     } catch (error) {
-        logSystem(`Lỗi gửi lệnh: ${error}`);
+        logSystem(`Loi gui lenh: ${error}`);
     }
 }
 

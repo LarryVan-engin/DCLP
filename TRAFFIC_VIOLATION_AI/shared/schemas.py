@@ -24,9 +24,10 @@ class ZoneDefinition(BaseModel):
 # 2. SCHEMA: LỆNH ĐIỀU KHIỂN (Server -> Edge qua MQTT: control/{camera_id}/command)
 # ==========================================
 class ControlCommand(BaseModel):
-    action: str = Field(..., description="'start', 'stop', 'pause', 'update_zones'")
+    action: str = Field(..., description="'start', 'stop', 'pause', 'update_zones', 'update_roi'")
     mode: str = Field(..., description="'realtime' hoặc 'video'")
     video_name: Optional[str] = Field(None, description="Tên file video local trên Jetson nếu chạy mode 'video'")
+    roi: Optional[List[List[float]]] = Field(None, description="ROI polygon points [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]")
     lines: List[ZoneDefinition] = []
     polygons: List[ZoneDefinition] = []
     light_zones: List[ZoneDefinition] = []

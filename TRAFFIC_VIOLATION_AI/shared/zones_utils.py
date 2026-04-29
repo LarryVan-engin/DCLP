@@ -85,3 +85,58 @@ def check_vehicle_crossed_line(trajectory: List[Tuple[int, int]], line_zone: Zon
     p2 = trajectory[-1]
 
     return check_line_intersection(p1, p2, p3, p4)
+
+# =====================================================================
+# 4. KIỂM TRA VI PHẠM LÀN ĐƯỜNG (WRONG LANE DETECTION)
+# =====================================================================
+def check_wrong_way(bbox: List[float], trajectory: List[Tuple[int, int]], 
+                    zones_config: dict, class_id: int) -> bool:
+    """
+    Kiểm tra xem xe có đang lái sai làn hay không.
+    
+    Tham số:
+    - bbox: [x1, y1, x2, y2] - Bounding box của xe
+    - trajectory: Danh sách tọa độ di chuyển theo thời gian
+    - zones_config: Dict chứa "lines" (vạch kẻ) và "polygons" (vùng làn)
+    - class_id: YOLO class ID (2=car, 3=motorcycle, etc.)
+    
+    Trả về:
+    - True: Xe đang lái sai làn
+    - False: Xe đang chạy đúng làn
+    """
+    if len(trajectory) < 3 or "polygons" not in zones_config:
+        return False
+    
+    # Lấy tọa độ điểm giữa bánh xe (bottom center)
+    vehicle_point = get_bottom_center(bbox)
+    
+    # Lấy các vùng làn từ config
+    lane_zones = zones_config.get("polygons", [])
+    if not lane_zones:
+        return False
+    
+    # Kiểm tra xe có nằm trong bất kỳ vùng làn nào không
+    in_any_lane = False
+    for zone in lane_zones:
+        if zone.label and "lane" in zone.label.lower():
+            zone_poly = zone_to_numpy(zone)
+            if is_point_in_polygon(vehicle_point, zone_poly):
+                in_any_lane = True
+                break
+    
+    # Nếu không nằm trong bất kỳ làn nào -> Sai làn
+    # Kiểm tra thêm: Nếu trajectory di chuyển từ làn này sang làn khác quá nhanh -> Vi phạm
+    if len(trajectory) >= 3:
+        # So sánh vị trí 3 frame gần nhất
+        prev_point = trajectory[-3]
+        curr_point = trajectory[-1]
+        distance = ((curr_point[0] - prev_point[0])**2 + (curr_point[1] - prev_point[1])**2)**0.5
+        
+        # Nếu di chuyển quá nhanh theo trục Y (sang làn) -> Có khả năng sai làn
+        y_diff = abs(curr_point[1] - prev_point[1])
+        
+        # Ngưỡng: Nếu di chuyển > 30 pixel theo Y trong 3 frame -> Đáng ngờ
+        if y_diff > 30:
+            return True
+    
+    return not in_any_lane
