@@ -35,11 +35,11 @@
                 <div class="card shadow-sm mb-3 border-0">
                     <div class="card-header bg-primary text-white fw-bold">ĐIỀU KHIỂN HỆ THỐNG</div>
                     <div class="card-body">
-                        <label class="form-label small fw-bold">CHỌN CAMERA EDGE</label>
+                        <label class="form-label small fw-bold">CHỌN CAMERA AI</label>
                         <select id="camera-select" class="form-select mb-3 shadow-none" onchange="refreshEdgeFiles()">
-                            <option value="JETSON_01">JETSON_01 (Ngã tư Hàng Xanh)</option>
-                            <option value="JETSON_02">JETSON_02 (Cầu Sài Gòn)</option>
+                            <option value="" disabled selected>⏳ Chờ kết nối từ Edge...</option>
                         </select>
+                        <small class="text-muted d-block mb-3">* Danh sách camera sẽ cập nhật khi Edge kết nối</small>
 
                         <ul class="nav nav-pills nav-fill bg-light p-1 rounded mb-3" id="modeTab" role="tablist">
                             <li class="nav-item">
@@ -62,7 +62,7 @@
                                     <select id="video-file-select" class="form-select shadow-none">
                                         <option value="">Đang tải danh sách...</option>
                                     </select>
-                                    <button class="btn btn-outline-secondary" type="button" onclick="refreshEdgeFiles()">🔄</button>
+                                    <button class="btn btn-outline-secondary" type="button" onclick="refreshEdgeFiles()">ðŸ”„</button>
                                 </div>
                                 <button onclick="sendControl('start', 'video')" class="btn btn-danger btn-sm w-100 mb-2 shadow-sm">CHẠY XỬ LÝ PHẠT</button>
                             </div>
@@ -80,7 +80,8 @@
                           </div>
                       </div>
                       
-                        <button onclick="sendControl('stop')" class="btn btn-outline-dark btn-sm w-100 border-2 fw-bold">DỪNG TẤT CẢ</button>
+                        <button id="stop-continue-btn" onclick="toggleStopContinue()" class="btn btn-outline-dark btn-sm w-100 border-2 fw-bold">DỪNG TẤT CẢ</button>
+                        <a href="/api/export_violations_csv" class="btn btn-info btn-sm w-100 border-2 fw-bold mt-2" download>XUẤT FILE CSV VI PHẠM</a>
                     </div>
                 </div>
 
@@ -105,7 +106,7 @@
                     <div id="roi-canvas" class="position-absolute top-0 start-0 w-100 h-100"></div>
 
                     <div id="stream-placeholder" class="position-absolute top-50 start-50 translate-middle text-center text-white-50">
-                        <h2 class="mb-3">🚦</h2>
+                        <h2 class="mb-3">ðŸš¦</h2>
                         <h5>CHƯA CÓ TÍN HIỆU</h5>
                         <p class="small">Vui lòng chọn Camera và nhấn Bắt đầu</p>
                     </div>
@@ -114,7 +115,7 @@
                 <div class="mt-2 bg-white p-2 rounded shadow-sm d-flex justify-content-between">
                     <div>
                         <button class="btn btn-sm btn-outline-primary fw-bold" onclick="toggleROILayer()">Ẩn/Hiện ROI</button>
-                        <button class="btn btn-sm btn-warning fw-bold ms-2" onclick="resetROI()">🔄 Reset ROI</button>
+                        <button class="btn btn-sm btn-warning fw-bold ms-2" onclick="resetROI()">ðŸ”„ Reset ROI</button>
                     </div>
                     <button class="btn btn-sm btn-primary fw-bold" onclick="saveROI()">Lưu & Áp dụng ROI</button>
                 </div>
@@ -160,10 +161,15 @@
                         <div class="col-md-5 ps-4">
                             <h6 class="fw-bold text-primary mb-3">THÔNG TIN CHI TIẾT</h6>
                             <ul class="list-group list-group-flush mb-4 small">
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>Loại lỗi:</span> <b id="modal-type" class="text-danger"></b></li>
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>Chủ xe:</span> <b id="modal-owner"></b></li>
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>Thời gian:</span> <span id="modal-time" class="fw-bold"></span></li>
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>Thiết bị:</span> <span id="modal-camera" class="badge bg-secondary"></span></li>
+                                <li class="list-group-item d-flex justify-content-between px-0"><span>Loai loi:</span> <b id="modal-type" class="text-danger"></b></li>
+                                <li class="list-group-item d-flex justify-content-between px-0"><span>Chu xe:</span> <b id="modal-owner"></b></li>
+                                <li class="list-group-item d-flex justify-content-between px-0"><span>SDT:</span> <b id="modal-phone"></b></li>
+                                <li class="list-group-item d-flex justify-content-between px-0"><span>Loai xe:</span> <b id="modal-class"></b></li>
+                                <li class="list-group-item d-flex justify-content-between px-0"><span>Tinh/TP:</span> <b id="modal-province"></b></li>
+                                <li class="list-group-item d-flex justify-content-between px-0"><span>Ngay dang ky:</span> <b id="modal-registration-date"></b></li>
+                                <li class="list-group-item d-flex justify-content-between px-0"><span>CCCD/CMND:</span> <b id="modal-id-card"></b></li>
+                                <li class="list-group-item d-flex justify-content-between px-0"><span>Thoi gian:</span> <span id="modal-time" class="fw-bold"></span></li>
+                                <li class="list-group-item d-flex justify-content-between px-0"><span>Thiet bi:</span> <span id="modal-camera" class="badge bg-secondary"></span></li>
                             </ul>
                             <div class="d-grid gap-2">
                                 <button class="btn btn-success fw-bold shadow-sm" onclick="approveViolation()">✅ Phê duyệt phạt</button>

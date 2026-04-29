@@ -1,4 +1,4 @@
-"""
+﻿"""
 ********************************************************************************************************************
 Project:      Traffic Violation Detection (Pro Version - MQTT Hybrid)
 File:         server/api_main.py
@@ -36,7 +36,7 @@ VIOLATION_DIR = os.path.join(BASE_DIR, "violations")
 MODEL_PLATE_PATH = os.path.join(BASE_DIR, "models", "model_detect_license_plate.pt")
 
 # MQTT Settings
-MQTT_BROKER = "broker.hivemq.com" # Hoặc Cloud Broker của bạn
+MQTT_BROKER = "127.0.0.1" 
 MQTT_PORT = 1883
 MQTT_CLIENT_ID = "TRAFFIC_SERVER_01"
 
@@ -65,8 +65,9 @@ except Exception as e:
 
 # Global State
 active_ws: List[WebSocket] = []
-last_heartbeat = {}
-current_stream_frame = "" # Base64 frame để đẩy lên UI
+last_heartbeat = {}  # {camera_id: {stats, fps, ...}}
+current_stream_frame = "" # Base64 frame 
+connected_cameras = {}  # {camera_id: {id, location, last_seen}}
 
 # ====================== MONGODB CONNECTION ======================
 client = AsyncIOMotorClient(MONGO_URI)
@@ -77,15 +78,21 @@ violations_col = db.violations
 def on_connect(client, userdata, flags, rc):
     print(f"[MQTT] Connected with result code {rc}")
     # Subscribe tất cả các camera
-    client.subscribe("status/+/heartbeat")
+    res = client.subscribe("status/+/heartbeat")
+    print(f"[SERVER MQTT] Kết quả Subscribe Heartbeat: {res}")
+
+    client.subscribe("status/+/files")
+    client.subscribe("status/+/roi_preview")
     client.subscribe("stream/+/mjpeg")
     client.subscribe("violation/+")
 
 def on_message(client, userdata, msg):
+    # Thêm dòng này để theo dõi:
+    print(f"[DEBUG MQTT] 📥 Nhận được tin nhắn tại topic: {msg.topic}")
     asyncio.run_coroutine_threadsafe(handle_mqtt_message(msg), loop)
 
 async def handle_mqtt_message(msg):
-    global current_stream_frame
+    global current_stream_frame, connected_cameras
     topic = msg.topic
     payload = msg.payload.decode()
 
@@ -96,7 +103,19 @@ async def handle_mqtt_message(msg):
     # Xử lý Heartbeat/Stats
     elif "status/" in topic and "heartbeat" in topic:
         data = json.loads(payload)
-        last_heartbeat[data['camera_id']] = data
+        camera_id = data.get('camera_id')
+        last_heartbeat[camera_id] = data
+        
+        # Cập nhật danh sách camera kết nối
+        if camera_id not in connected_cameras:
+            connected_cameras[camera_id] = {
+                "id": camera_id,
+                "location": f"Edge Device - {camera_id}",
+                "connected_at": datetime.now().isoformat()
+            }
+            # Gửi danh sách camera cập nhật tới tất cả clients
+            await broadcast_camera_list()
+            print(f"[SERVER] ✅ Camera mới kết nối: {camera_id}")
 
     # Xử lý Danh sách Video (Dành cho tính năng chọn file động)
     elif "status/" in topic and "files" in topic:
@@ -110,6 +129,19 @@ async def handle_mqtt_message(msg):
             print(f"[SERVER] Lỗi parse file list: {e}")
 
     # 4. Xử lý Violation (Quan trọng nhất)
+    elif "status/" in topic and "roi_preview" in topic:
+        try:
+            data = json.loads(payload)
+            for ws in active_ws:
+                await ws.send_json({
+                    "type": "auto_roi_proposal",
+                    "camera_id": data.get("camera_id"),
+                    "video_name": data.get("video_name"),
+                    "points": data.get("points", [])
+                })
+        except Exception as e:
+            print(f"[SERVER] Loi parse ROI preview: {e}")
+
     elif "violation/" in topic:
         data = json.loads(payload)
         await process_violation(data)
@@ -175,13 +207,35 @@ async def process_violation(data: dict):
     except Exception as e:
         print(f"[ERROR] Process violation failed: {e}")
 
+# ====================== BROADCAST FUNCTIONS ======================
+async def broadcast_camera_list():
+    """Gửi danh sách camera tới tất cả clients đang kết nối"""
+    camera_list = list(connected_cameras.values())
+    message = {"type": "camera_list", "cameras": camera_list}
+    for ws in active_ws:
+        try:
+            await ws.send_json(message)
+        except Exception as e:
+            print(f"[SERVER] Loi camera list: {e}")
+
 # Khởi chạy MQTT trong background
-mqtt_client = mqtt.Client(MQTT_CLIENT_ID)
+# Chuẩn bị MQTT Client
+mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, MQTT_CLIENT_ID)
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
-mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
-mqtt_client.loop_start()
-loop = asyncio.get_event_loop()
+loop = None  # Khởi tạo biến rỗng, sẽ gán sau
+
+# Sử dụng Lifespan hook của FastAPI để đồng bộ Event Loop
+@app.on_event("startup")
+async def startup_event():
+    global loop
+    # Lấy CHÍNH XÁC Event Loop đang sống của Uvicorn
+    loop = asyncio.get_running_loop() 
+    
+    # Bắt đầu kết nối MQTT sau khi Web Server đã chạy
+    mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+    mqtt_client.loop_start()
+    print("[SERVER] Khởi động luồng MQTT nền thành công.")
 
 # ====================== API ENDPOINTS ======================
 @app.get("/")
@@ -195,17 +249,64 @@ async def refresh_videos(camera_id: str):
     return {"status": "request_sent"}
 
 @app.post("/api/control_edge")
-async def control_edge(cmd: ControlCommand, camera_id: str):
-    """Gửi lệnh MQTT xuống Edge"""
+async def control_edge(request: Request, camera_id: str):
+    """Gui lenh MQTT xuong Edge; nhan raw JSON de stop/reset/preview khong bi schema chan."""
+    cmd = await request.json()
+    cmd.setdefault("mode", "realtime")
     topic = f"control/{camera_id}/command"
-    mqtt_client.publish(topic, cmd.json())
+    mqtt_client.publish(topic, json.dumps(cmd))
+    print(f"[SERVER MQTT] Published command to {topic}: {cmd.get('action')}")
     return {"status": "ok", "message": f"Command sent to {camera_id}"}
+
+import csv
+import io
+from fastapi.responses import StreamingResponse
+
+@app.get("/api/export_violations_csv")
+async def export_violations_csv():
+    # Query all violations from MongoDB
+    cursor = violations_col.find({})
+    violations = await cursor.to_list(length=None)
+    
+    # Create CSV in memory
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Define headers based on schema
+    headers = [
+        "timestamp", "camera_id", "violation_type", "license_plate",
+        "owner_name", "phone", "address", "confidence"
+    ]
+    writer.writerow(headers)
+    
+    for v in violations:
+        writer.writerow([
+            v.get("timestamp", ""),
+            v.get("camera_id", ""),
+            v.get("violation_type", ""),
+            v.get("license_plate", ""),
+            v.get("owner_name", ""),
+            v.get("phone", ""),
+            v.get("address", ""),
+            v.get("confidence", "")
+        ])
+        
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=violations.csv"}
+    )
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     active_ws.append(websocket)
     try:
+        # Gửi danh sách camera hiện tại ngay khi client kết nối
+        camera_list = list(connected_cameras.values())
+        await websocket.send_json({"type": "camera_list", "cameras": camera_list})
+        
         while True:
             # Đẩy Heartbeat và Stream liên tục lên Dashboard
             await websocket.send_json({
