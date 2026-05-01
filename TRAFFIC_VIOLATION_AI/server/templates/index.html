@@ -62,9 +62,10 @@
                                     <select id="video-file-select" class="form-select shadow-none">
                                         <option value="">Đang tải danh sách...</option>
                                     </select>
-                                    <button class="btn btn-outline-secondary" type="button" onclick="refreshEdgeFiles()">ðŸ”„</button>
+                                    <button class="btn btn-outline-secondary" type="button" onclick="refreshEdgeFiles()">🔄</button>
                                 </div>
                                 <button onclick="sendControl('start', 'video')" class="btn btn-danger btn-sm w-100 mb-2 shadow-sm">CHẠY XỬ LÝ PHẠT</button>
+                                <button onclick="sendControl('start', 'video_local')" class="btn btn-warning btn-sm w-100 mb-2 shadow-sm text-dark fw-bold">XỬ LÝ LOCAL TRÊN KIT</button>
                             </div>
                         </div>
 
@@ -106,7 +107,7 @@
                     <div id="roi-canvas" class="position-absolute top-0 start-0 w-100 h-100"></div>
 
                     <div id="stream-placeholder" class="position-absolute top-50 start-50 translate-middle text-center text-white-50">
-                        <h2 class="mb-3">ðŸš¦</h2>
+                        <h2 class="mb-3">🚦</h2>
                         <h5>CHƯA CÓ TÍN HIỆU</h5>
                         <p class="small">Vui lòng chọn Camera và nhấn Bắt đầu</p>
                     </div>
@@ -115,7 +116,7 @@
                 <div class="mt-2 bg-white p-2 rounded shadow-sm d-flex justify-content-between">
                     <div>
                         <button class="btn btn-sm btn-outline-primary fw-bold" onclick="toggleROILayer()">Ẩn/Hiện ROI</button>
-                        <button class="btn btn-sm btn-warning fw-bold ms-2" onclick="resetROI()">ðŸ”„ Reset ROI</button>
+                        <button class="btn btn-sm btn-warning fw-bold ms-2" onclick="resetROI()">🔃 Reset ROI</button>
                     </div>
                     <button class="btn btn-sm btn-primary fw-bold" onclick="saveROI()">Lưu & Áp dụng ROI</button>
                 </div>
@@ -161,15 +162,15 @@
                         <div class="col-md-5 ps-4">
                             <h6 class="fw-bold text-primary mb-3">THÔNG TIN CHI TIẾT</h6>
                             <ul class="list-group list-group-flush mb-4 small">
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>Loai loi:</span> <b id="modal-type" class="text-danger"></b></li>
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>Chu xe:</span> <b id="modal-owner"></b></li>
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>SDT:</span> <b id="modal-phone"></b></li>
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>Loai xe:</span> <b id="modal-class"></b></li>
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>Tinh/TP:</span> <b id="modal-province"></b></li>
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>Ngay dang ky:</span> <b id="modal-registration-date"></b></li>
+                                <li class="list-group-item d-flex justify-content-between px-0"><span>Loại lỗi:</span> <b id="modal-type" class="text-danger"></b></li>
+                                <li class="list-group-item d-flex justify-content-between px-0"><span>Chủ xe:</span> <b id="modal-owner"></b></li>
+                                <li class="list-group-item d-flex justify-content-between px-0"><span>SĐT:</span> <b id="modal-phone"></b></li>
+                                <li class="list-group-item d-flex justify-content-between px-0"><span>Loại xe:</span> <b id="modal-class"></b></li>
+                                <li class="list-group-item d-flex justify-content-between px-0"><span>Tỉnh/TP:</span> <b id="modal-province"></b></li>
+                                <li class="list-group-item d-flex justify-content-between px-0"><span>Ngày đăng ký:</span> <b id="modal-registration-date"></b></li>
                                 <li class="list-group-item d-flex justify-content-between px-0"><span>CCCD/CMND:</span> <b id="modal-id-card"></b></li>
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>Thoi gian:</span> <span id="modal-time" class="fw-bold"></span></li>
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>Thiet bi:</span> <span id="modal-camera" class="badge bg-secondary"></span></li>
+                                <li class="list-group-item d-flex justify-content-between px-0"><span>Thời gian:</span> <span id="modal-time" class="fw-bold"></span></li>
+                                <li class="list-group-item d-flex justify-content-between px-0"><span>Thiết bị:</span> <span id="modal-camera" class="badge bg-secondary"></span></li>
                             </ul>
                             <div class="d-grid gap-2">
                                 <button class="btn btn-success fw-bold shadow-sm" onclick="approveViolation()">✅ Phê duyệt phạt</button>
@@ -190,7 +191,9 @@
           <p class="text-muted mb-0" style="font-size: 0.85rem;">
               &copy; 2025 <strong>LARRY VAN</strong>. All Rights Reserved. 
               <span class="mx-2">|</span> 
-              Phát triển bởi <strong>Larry Van & Phan Thành Sang</strong> - HCMUT AI Research
+              Phát triển bởi <strong>Larry Van</strong> - HCMUT
+              <span class="mx-2">|</span>
+              Hỗ trợ bởi <strong>Phan Thành Sang</strong> - HCMUT
               <span class="mx-2">|</span>
               Hướng dẫn bởi <strong>ThS. Đinh Quốc Hùng</strong>
           </p>

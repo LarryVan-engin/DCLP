@@ -1,4 +1,4 @@
-﻿"""
+"""
 ********************************************************************************************************************
 Project:      Traffic Violation Detection (Pro Version - MQTT Hybrid)
 File:         server/api_main.py
@@ -11,13 +11,14 @@ import base64
 import os
 import json
 import re
+from contextlib import asynccontextmanager
 import cv2
 import numpy as np
 import pandas as pd
 import paho.mqtt.client as mqtt
 from datetime import datetime
 from typing import Dict, List
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from ultralytics import YOLO
@@ -41,12 +42,50 @@ MQTT_PORT = 1883
 MQTT_CLIENT_ID = "TRAFFIC_SERVER_01"
 
 # MongoDB Settings (Atlas)
-MONGO_URI = "mongodb+srv://admin:admin123@cluster0.teleibk.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://admin:admin123@cluster0.iipaqpd.mongodb.net/?appName=Cluster0")
 
 os.makedirs(VIOLATION_DIR, exist_ok=True)
 
 # ====================== INITIALIZATION ======================
-app = FastAPI(title="AI Traffic Monitoring Server")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Quản lý vòng đời ứng dụng: Khởi tạo và Giải phóng tài nguyên"""
+    global loop, mongodb_connected
+    # Lấy CHÍNH XÁC Event Loop đang sống của Uvicorn
+    loop = asyncio.get_running_loop() 
+
+    # 1. Kiểm tra kết nối MongoDB thực tế
+    try:
+        await client.admin.command("ping")
+        mongodb_connected = True
+        print("[SERVER] ✅ Connected to MongoDB Atlas: traffic_db.violations")
+        
+        # Tạo Index cho MongoDB để tối ưu query
+        await violations_col.create_index("camera_id")
+        await violations_col.create_index("timestamp")
+        await violations_col.create_index("violation_type")
+        await violations_col.create_index("plate_read")
+        print("[SERVER] ✅ MongoDB indexes created successfully")
+    except Exception as e:
+        mongodb_connected = False
+        print(f"[SERVER] ❌ MongoDB connection failed: {e}")
+    
+    # 2. Khởi động kết nối MQTT
+    try:
+        mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+        mqtt_client.loop_start()
+        print("[SERVER] ✅ Khởi động luồng MQTT nền thành công.")
+    except Exception as e:
+        print(f"[SERVER] ❌ MQTT connection failed: {e}")
+
+    yield # Tại đây ứng dụng sẽ chạy và phục vụ requests
+    
+    # 3. Dọn dẹp tài nguyên khi tắt Server
+    mqtt_client.loop_stop()
+    client.close() # Đóng pool kết nối MongoDB
+    print("[SERVER] 🛑 Resources cleaned up (MQTT stopped, MongoDB closed).")
+
+app = FastAPI(title="AI Traffic Monitoring Server", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 
 # Load Models & Database
@@ -70,9 +109,10 @@ current_stream_frame = "" # Base64 frame
 connected_cameras = {}  # {camera_id: {id, location, last_seen}}
 
 # ====================== MONGODB CONNECTION ======================
-client = AsyncIOMotorClient(MONGO_URI)
+client = AsyncIOMotorClient(MONGO_URI, serverSelectionTimeoutMS=5000)
 db = client.traffic_db
 violations_col = db.violations
+mongodb_connected = False
 
 # ====================== MQTT LOGIC ======================
 def on_connect(client, userdata, flags, rc):
@@ -140,7 +180,7 @@ async def handle_mqtt_message(msg):
                     "points": data.get("points", [])
                 })
         except Exception as e:
-            print(f"[SERVER] Loi parse ROI preview: {e}")
+            print(f"[SERVER] Lỗi parse ROI preview: {e}")
 
     elif "violation/" in topic:
         data = json.loads(payload)
@@ -194,8 +234,21 @@ async def process_violation(data: dict):
             "processed_at": datetime.now().isoformat()
         }
 
-        # Lưu MongoDB Atlas
-        result = await violations_col.insert_one(violation_doc.copy())
+        # Lưu MongoDB Atlas với retry
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                result = await violations_col.insert_one(violation_doc.copy())
+                print(f"[SERVER] ✅ Violation saved to MongoDB: {result.inserted_id}")
+                break
+            except Exception as mongo_err:
+                print(f"[SERVER] MongoDB insert attempt {attempt+1} failed: {mongo_err}")
+                if attempt == max_retries - 1:
+                    # Backup to local JSON if MongoDB fails
+                    backup_path = os.path.join(VIOLATION_DIR, f"backup_{file_name.replace('.jpg', '.json')}")
+                    with open(backup_path, 'w', encoding='utf-8') as f:
+                        json.dump(violation_doc, f, ensure_ascii=False)
+                    print(f"[SERVER] ⚠️ Backup saved to local: {backup_path}")
 
         # Đẩy qua WebSocket lên UI (Phải bỏ ObjectId đi vì JSON không serialize được)
         if "_id" in violation_doc:
@@ -225,18 +278,6 @@ mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 loop = None  # Khởi tạo biến rỗng, sẽ gán sau
 
-# Sử dụng Lifespan hook của FastAPI để đồng bộ Event Loop
-@app.on_event("startup")
-async def startup_event():
-    global loop
-    # Lấy CHÍNH XÁC Event Loop đang sống của Uvicorn
-    loop = asyncio.get_running_loop() 
-    
-    # Bắt đầu kết nối MQTT sau khi Web Server đã chạy
-    mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
-    mqtt_client.loop_start()
-    print("[SERVER] Khởi động luồng MQTT nền thành công.")
-
 # ====================== API ENDPOINTS ======================
 @app.get("/")
 async def get_dashboard():
@@ -258,6 +299,27 @@ async def control_edge(request: Request, camera_id: str):
     print(f"[SERVER MQTT] Published command to {topic}: {cmd.get('action')}")
     return {"status": "ok", "message": f"Command sent to {camera_id}"}
 
+@app.post("/api/upload_video/{camera_id}")
+async def upload_video(camera_id: str, video: UploadFile = File(...), processing_time_seconds: float = Form(...)):
+    save_dir = os.path.join(BASE_DIR, "static", "videos")
+    os.makedirs(save_dir, exist_ok=True)
+    file_path = os.path.join(save_dir, video.filename)
+    
+    with open(file_path, "wb") as f:
+        f.write(await video.read())
+        
+    print(f"[SERVER] ✅ Nhận thành công Video Local từ Camera {camera_id}: {video.filename}")
+    
+    # Broadcast tới Dashboard
+    for ws in active_ws:
+        await ws.send_json({
+            "type": "video_ready",
+            "video_url": f"/static/videos/{video.filename}",
+            "processing_time": processing_time_seconds
+        })
+        
+    return {"status": "success", "file": video.filename}
+
 import csv
 import io
 from fastapi.responses import StreamingResponse
@@ -272,10 +334,10 @@ async def export_violations_csv():
     output = io.StringIO()
     writer = csv.writer(output)
     
-    # Define headers based on schema
+    # Define headers based on actual schema
     headers = [
-        "timestamp", "camera_id", "violation_type", "license_plate",
-        "owner_name", "phone", "address", "confidence"
+        "timestamp", "camera_id", "violation_type", "plate_read",
+        "owner", "phone", "province", "confidence"
     ]
     writer.writerow(headers)
     
@@ -284,10 +346,10 @@ async def export_violations_csv():
             v.get("timestamp", ""),
             v.get("camera_id", ""),
             v.get("violation_type", ""),
-            v.get("license_plate", ""),
-            v.get("owner_name", ""),
+            v.get("plate_read", ""),
+            v.get("owner", ""),
             v.get("phone", ""),
-            v.get("address", ""),
+            v.get("province", ""),
             v.get("confidence", "")
         ])
         
@@ -302,6 +364,7 @@ async def export_violations_csv():
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     active_ws.append(websocket)
+    print(f"[SERVER] ✅ WebSocket client connected. Total: {len(active_ws)}")
     try:
         # Gửi danh sách camera hiện tại ngay khi client kết nối
         camera_list = list(connected_cameras.values())
@@ -317,6 +380,7 @@ async def websocket_endpoint(websocket: WebSocket):
             await asyncio.sleep(0.1) # Tương đương 10 FPS cho UI
     except WebSocketDisconnect:
         active_ws.remove(websocket)
+        print(f"[SERVER] ❌ WebSocket client disconnected. Total: {len(active_ws)}")
 
 if __name__ == "__main__":
     import uvicorn

@@ -13,6 +13,7 @@ import time
 import os
 import sys
 import threading
+import requests
 import paho.mqtt.client as mqtt
 # Import Utils & Config
 import edge_config as cfg
@@ -32,7 +33,7 @@ from collections import defaultdict
 
 # Thêm đường dẫn để import shared schemas
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.abspath(os.path.join(BASE_DIR, '..')))
+sys.path.append(BASE_DIR)
 from shared.schemas import ZoneDefinition
 
 # ====================== GLOBAL STATE & INIT ======================
@@ -238,6 +239,7 @@ def denormalize_points(points, width, height):
     return denormalized
 
 def build_zones_config(cmd, width, height):
+    global roi_polygon
     def convert_zone(zone):
         zone_copy = dict(zone)
         zone_copy["points"] = [
@@ -246,10 +248,19 @@ def build_zones_config(cmd, width, height):
         ]
         return ZoneDefinition(**zone_copy)
 
-    return {
+    zones = {
         "lines": [convert_zone(z) for z in cmd.get("lines", [])],
         "polygons": [convert_zone(z) for z in cmd.get("polygons", [])]
     }
+    
+    has_stop_line = any(z.label == "stop_line" for z in zones["lines"])
+    if not has_stop_line and roi_polygon is not None and len(roi_polygon) >= 2:
+        zones["lines"].append(ZoneDefinition(
+            label="stop_line",
+            points=[{"x": int(roi_polygon[0][0]), "y": int(roi_polygon[0][1])},
+                    {"x": int(roi_polygon[1][0]), "y": int(roi_polygon[1][1])}]
+        ))
+    return zones
 
 def publish_video_roi_preview(client, video_name):
     global roi_polygon, active_video
@@ -318,7 +329,7 @@ def ai_processing_loop(client):
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     if fps == 0: fps = 30
     
-    video_basename = os.path.basename(str(source)) if current_mode == 'video' else 'realtime_output.mp4'
+    video_basename = os.path.basename(str(source)) if current_mode in ('video', 'video_local') else 'realtime_output.mp4'
     output_filename = f"processed_{int(time.time())}_{video_basename}"
     output_path = os.path.join(cfg.VIDEOS_DIR, output_filename)
     
@@ -404,7 +415,7 @@ def ai_processing_loop(client):
                 new_violations_list = [] # Khởi tạo danh sách lỗi trống cho mỗi xe
                 
                 # --- LOGIC VI PHẠM (Chỉ xử phạt ở Mode Video hoặc có yêu cầu) ---
-                if current_mode == "video":
+                if current_mode in ("video", "video_local"):
                     if is_forbidden_mode:
                         # ==========================================
                         # CHẾ ĐỘ ĐƯỜNG CẤM (FORBIDDEN MODE)
@@ -420,9 +431,6 @@ def ai_processing_loop(client):
                         # ==========================================
                         # CHẾ ĐỘ ĐƯỜNG BÌNH THƯỜNG (NORMAL MODE)
                         # ==========================================
-                        if not lane_detector.is_ready: # Sửa lỗi gọi hàm ()
-                            lane_detector.update_learning_data(boxes, classes)
-                            
                         new_violations_list = violation_engine.check_violations(
                             track_id=track_id, bbox=[x1, y1, x2, y2], 
                             trajectory=path, light_status={"straight": current_light}, 
@@ -437,27 +445,7 @@ def ai_processing_loop(client):
                                     new_violations_list.append("SAI LÀN")
                                     violation_engine.recorded_violations[track_id].add("SAI LÀN")
                         
-                        # ==========================================
-                        # KIỂM TRA VƯỢT ĐÈN DỰA TRÊN ROI (giống full_main.py)
-                        # ==========================================
-                        # Logic: Nếu xe đi qua đường stop line (roi_top_y) khi đèn đỏ/vàng
-                        center_y = (y1 + y2) // 2
-                        
-                        # Kiểm tra xe vừa đi qua đường stop line (từ dưới lên trên)
-                        if len(path) >= 2:
-                            prev_y = path[-2][1]
-                            curr_y = path[-1][1]
-                            
-                            # Xe đi từ dưới lên qua stop line
-                            if prev_y >= roi_top_y and curr_y < roi_top_y:
-                                if current_light == "red":
-                                    if "VƯỢT ĐÈN ĐỎ" not in violation_engine.recorded_violations[track_id]:
-                                        new_violations_list.append("VƯỢT ĐÈN ĐỎ")
-                                        violation_engine.recorded_violations[track_id].add("VƯỢT ĐÈN ĐỎ")
-                                elif current_light == "yellow":
-                                    if "VƯỢT ĐÈN VÀNG" not in violation_engine.recorded_violations[track_id]:
-                                        new_violations_list.append("VƯỢT ĐÈN VÀNG")
-                                        violation_engine.recorded_violations[track_id].add("VƯỢT ĐÈN VÀNG")
+
                     
                     # NẾU CÓ LỖI -> SMART CAPTURE & PUBLISH MQTT
                     if len(new_violations_list) > 0:
@@ -485,7 +473,7 @@ def ai_processing_loop(client):
             frame = draw_lanes_on_frame(frame, lane_detector)
 
         # 3. Stream Frame realtime
-        if frame_count % 3 == 0:
+        if current_mode != "video_local" and frame_count % 3 == 0:
             # Dùng cv2.imencode trả về base64 tự viết lại nhanh ở đây để giảm phụ thuộc
             encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), cfg.STREAM_JPEG_QUALITY]
             _, buffer = cv2.imencode('.jpg', cv2.resize(frame, cfg.STREAM_RESOLUTION), encode_param)
@@ -510,8 +498,8 @@ def ai_processing_loop(client):
     is_running = False
     
     # 5. Gửi gói Complete khi xử lý xong (Chỉ ở mode Video)
-    should_publish_complete = current_mode == "video" and completed_naturally
-    if current_mode == "video" and stop_reason == "reset_roi":
+    should_publish_complete = current_mode in ("video", "video_local") and completed_naturally
+    if current_mode in ("video", "video_local") and stop_reason == "reset_roi":
         print("[EDGE] Đã dừng video để xử lý ROI.")
     stop_reason = None
 
@@ -525,6 +513,22 @@ def ai_processing_loop(client):
         }
         client.publish(cfg.TOPIC_COMPLETE, json.dumps(complete_pkt), qos=1)
         print(f"[EDGE] Đã gửi gói Complete. Tổng lỗi: {total_violations}")
+
+    # 6. Upload file mp4 nếu đang chạy mode video_local
+    if current_mode == "video_local" and completed_naturally:
+        try:
+            print(f"[EDGE] Đang upload video kết quả lên Server: {output_path}")
+            with open(output_path, 'rb') as f:
+                files = {'video': f}
+                data = {'processing_time_seconds': round(time.time() - start_time, 2)}
+                api_url = f"http://{cfg.MQTT_BROKER}:8000/api/upload_video/{cfg.CAMERA_ID}"
+                res = requests.post(api_url, files=files, data=data)
+                if res.status_code == 200:
+                    print(f"[EDGE] Upload thành công: {res.json()}")
+                else:
+                    print(f"[EDGE] Lỗi upload: HTTP {res.status_code}")
+        except Exception as e:
+            print(f"[EDGE] Lỗi kết nối upload video: {e}")
 
 def send_idle_heartbeat(client):
     """Gửi heartbeat định kỳ khi Edge đang ở trạng thái chờ (Idle)"""
@@ -572,7 +576,9 @@ def on_message(client, userdata, msg):
                 zones_config = {}
                 violation_engine.reset()
                 lane_detector.reset_learning()
-                current_mode = "video"
+                current_mode = "video" if cmd.get("action") == "preview_video" and current_mode != "video_local" else current_mode
+                if current_mode not in ("video", "video_local"):
+                    current_mode = "video"
                 if was_running:
                     time.sleep(0.2)
                 publish_video_roi_preview(client, cmd.get("video_name"))
@@ -621,7 +627,7 @@ def on_message(client, userdata, msg):
                 if not is_running:
                     current_mode = cmd.get("mode", "realtime")
                     active_video = cmd.get("video_name")
-                    if current_mode == "video" and not cmd.get("roi"):
+                    if current_mode in ("video", "video_local") and not cmd.get("roi"):
                         print("[EDGE] Preview frame, khong xu ly.")
                         publish_video_roi_preview(client, active_video)
                         return
