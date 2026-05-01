@@ -54,6 +54,7 @@ function connectWebSocket() {
         } else if (message.type === "auto_roi_proposal") {
             // Nhận tọa độ đề xuất từ AI và vẽ lên màn hình để chỉnh sửa
             loadAutoROI(message.points);
+<<<<<<< HEAD
             const currentMode = pendingVideoStart ? pendingVideoStart.mode : "video";
             pendingVideoStart = {
                 action: "start",
@@ -79,6 +80,14 @@ function connectWebSocket() {
             }
             videoPlayer.style.display = 'block';
             videoPlayer.src = message.video_url;
+=======
+            pendingVideoStart = {
+                action: "start",
+                mode: "video",
+                video_name: message.video_name || document.getElementById('video-file-select').value
+            };
+            logSystem("🤖 AI đã đề xuất vùng giám sát (Auto-ROI). Hãy kéo thả để tinh chỉnh.");
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
         }
     };
 
@@ -134,8 +143,11 @@ function updateVideoSelect(files) {
 function handleRealtimeStream(data) {
     if (data.stream) {
         streamPlaceholder.style.display = 'none';
+<<<<<<< HEAD
         const videoPlayer = document.getElementById('local-video-player');
         if (videoPlayer) videoPlayer.style.display = 'none';
+=======
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
         streamImg.style.display = 'block';
         streamImg.src = `data:image/jpeg;base64,${data.stream}`;
     }
@@ -177,7 +189,11 @@ function handleNewViolation(violation) {
             <span class="violation-time">${new Date(violation.timestamp).toLocaleTimeString()}</span>
         </div>
         <div class="violation-plate">${violation.plate_read || 'CHƯA ĐỌC ĐƯỢC BIỂN SỐ'}</div>
+<<<<<<< HEAD
         <div class="small text-muted mb-1">ID Xe: ${violation.track_id} | Chủ xe: ${violation.owner || 'N/A'}</div>
+=======
+        <div class="small text-muted mb-1">ID Xe: ${violation.track_id} | ChÃ¡Â»Â§ xe: ${violation.owner || 'N/A'}</div>
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
         <img src="data:image/jpeg;base64,${violation.vehicle_crop_base64}" alt="Violation Crop">
     `;
     list.prepend(card);
@@ -422,8 +438,13 @@ function resetROI() {
     const videoName = (lastStartPayload && lastStartPayload.video_name) ||
         (pendingVideoStart && pendingVideoStart.video_name) ||
         selectedVideoName;
+<<<<<<< HEAD
     const resetMode = (pendingVideoStart && (pendingVideoStart.mode === "video" || pendingVideoStart.mode === "video_local")) ||
         (lastStartPayload && (lastStartPayload.mode === "video" || lastStartPayload.mode === "video_local")) ? "video" : "realtime";
+=======
+    const resetMode = (pendingVideoStart && pendingVideoStart.mode === "video") ||
+        (lastStartPayload && lastStartPayload.mode === "video") ? "video" : "realtime";
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 
     if (layer) {
         layer.destroyChildren();
@@ -527,10 +548,17 @@ async function sendControl(action, mode = 'realtime') {
     const payload = {
         action: action,
         mode: mode,
+<<<<<<< HEAD
         video_name: (mode === 'video' || mode === 'video_local') ? videoName : null
     };
 
     if (action === 'start' && (mode === 'video' || mode === 'video_local')) {
+=======
+        video_name: (mode === 'video') ? videoName : null
+    };
+
+    if (action === 'start' && mode === 'video') {
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
         payload.action = 'preview_video';
         pendingVideoStart = { action: 'start', mode: 'video', video_name: videoName };
         lastStartPayload = null;
@@ -554,11 +582,14 @@ async function sendControl(action, mode = 'realtime') {
         if (action === 'stop') {
             setStopButton(true);
             streamImg.style.display = 'none';
+<<<<<<< HEAD
             const videoPlayer = document.getElementById('local-video-player');
             if (videoPlayer) {
                 videoPlayer.pause();
                 videoPlayer.style.display = 'none';
             }
+=======
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
             streamPlaceholder.style.display = 'block';
         }
     } catch (error) {

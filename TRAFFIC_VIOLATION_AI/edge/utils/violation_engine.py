@@ -14,7 +14,11 @@ from typing import List, Tuple, Dict
 from collections import defaultdict
 
 # Thêm đường dẫn để import shared module
+<<<<<<< HEAD
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+=======
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 from shared.zones_utils import (
     check_vehicle_crossed_line, 
     check_wrong_way, 

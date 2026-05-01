@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 """
+=======
+﻿"""
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 ********************************************************************************************************************
 Project:      Traffic Violation Detection (Pro Version - MQTT Hybrid)
 File:         server/api_main.py
@@ -11,14 +15,21 @@ import base64
 import os
 import json
 import re
+<<<<<<< HEAD
 from contextlib import asynccontextmanager
+=======
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 import cv2
 import numpy as np
 import pandas as pd
 import paho.mqtt.client as mqtt
 from datetime import datetime
 from typing import Dict, List
+<<<<<<< HEAD
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Form
+=======
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from ultralytics import YOLO
@@ -42,11 +53,16 @@ MQTT_PORT = 1883
 MQTT_CLIENT_ID = "TRAFFIC_SERVER_01"
 
 # MongoDB Settings (Atlas)
+<<<<<<< HEAD
 MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://admin:admin123@cluster0.iipaqpd.mongodb.net/?appName=Cluster0")
+=======
+MONGO_URI = "mongodb+srv://admin:admin123@cluster0.teleibk.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 
 os.makedirs(VIOLATION_DIR, exist_ok=True)
 
 # ====================== INITIALIZATION ======================
+<<<<<<< HEAD
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Quản lý vòng đời ứng dụng: Khởi tạo và Giải phóng tài nguyên"""
@@ -86,6 +102,9 @@ async def lifespan(app: FastAPI):
     print("[SERVER] 🛑 Resources cleaned up (MQTT stopped, MongoDB closed).")
 
 app = FastAPI(title="AI Traffic Monitoring Server", lifespan=lifespan)
+=======
+app = FastAPI(title="AI Traffic Monitoring Server")
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 
 # Load Models & Database
@@ -109,10 +128,16 @@ current_stream_frame = "" # Base64 frame
 connected_cameras = {}  # {camera_id: {id, location, last_seen}}
 
 # ====================== MONGODB CONNECTION ======================
+<<<<<<< HEAD
 client = AsyncIOMotorClient(MONGO_URI, serverSelectionTimeoutMS=5000)
 db = client.traffic_db
 violations_col = db.violations
 mongodb_connected = False
+=======
+client = AsyncIOMotorClient(MONGO_URI)
+db = client.traffic_db
+violations_col = db.violations
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 
 # ====================== MQTT LOGIC ======================
 def on_connect(client, userdata, flags, rc):
@@ -180,7 +205,11 @@ async def handle_mqtt_message(msg):
                     "points": data.get("points", [])
                 })
         except Exception as e:
+<<<<<<< HEAD
             print(f"[SERVER] Lỗi parse ROI preview: {e}")
+=======
+            print(f"[SERVER] Loi parse ROI preview: {e}")
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 
     elif "violation/" in topic:
         data = json.loads(payload)
@@ -234,6 +263,7 @@ async def process_violation(data: dict):
             "processed_at": datetime.now().isoformat()
         }
 
+<<<<<<< HEAD
         # Lưu MongoDB Atlas với retry
         max_retries = 3
         for attempt in range(max_retries):
@@ -249,6 +279,10 @@ async def process_violation(data: dict):
                     with open(backup_path, 'w', encoding='utf-8') as f:
                         json.dump(violation_doc, f, ensure_ascii=False)
                     print(f"[SERVER] ⚠️ Backup saved to local: {backup_path}")
+=======
+        # Lưu MongoDB Atlas
+        result = await violations_col.insert_one(violation_doc.copy())
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 
         # Đẩy qua WebSocket lên UI (Phải bỏ ObjectId đi vì JSON không serialize được)
         if "_id" in violation_doc:
@@ -278,6 +312,21 @@ mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 loop = None  # Khởi tạo biến rỗng, sẽ gán sau
 
+<<<<<<< HEAD
+=======
+# Sử dụng Lifespan hook của FastAPI để đồng bộ Event Loop
+@app.on_event("startup")
+async def startup_event():
+    global loop
+    # Lấy CHÍNH XÁC Event Loop đang sống của Uvicorn
+    loop = asyncio.get_running_loop() 
+    
+    # Bắt đầu kết nối MQTT sau khi Web Server đã chạy
+    mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+    mqtt_client.loop_start()
+    print("[SERVER] Khởi động luồng MQTT nền thành công.")
+
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 # ====================== API ENDPOINTS ======================
 @app.get("/")
 async def get_dashboard():
@@ -299,6 +348,7 @@ async def control_edge(request: Request, camera_id: str):
     print(f"[SERVER MQTT] Published command to {topic}: {cmd.get('action')}")
     return {"status": "ok", "message": f"Command sent to {camera_id}"}
 
+<<<<<<< HEAD
 @app.post("/api/upload_video/{camera_id}")
 async def upload_video(camera_id: str, video: UploadFile = File(...), processing_time_seconds: float = Form(...)):
     save_dir = os.path.join(BASE_DIR, "static", "videos")
@@ -320,6 +370,8 @@ async def upload_video(camera_id: str, video: UploadFile = File(...), processing
         
     return {"status": "success", "file": video.filename}
 
+=======
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 import csv
 import io
 from fastapi.responses import StreamingResponse
@@ -334,10 +386,17 @@ async def export_violations_csv():
     output = io.StringIO()
     writer = csv.writer(output)
     
+<<<<<<< HEAD
     # Define headers based on actual schema
     headers = [
         "timestamp", "camera_id", "violation_type", "plate_read",
         "owner", "phone", "province", "confidence"
+=======
+    # Define headers based on schema
+    headers = [
+        "timestamp", "camera_id", "violation_type", "license_plate",
+        "owner_name", "phone", "address", "confidence"
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
     ]
     writer.writerow(headers)
     
@@ -346,10 +405,17 @@ async def export_violations_csv():
             v.get("timestamp", ""),
             v.get("camera_id", ""),
             v.get("violation_type", ""),
+<<<<<<< HEAD
             v.get("plate_read", ""),
             v.get("owner", ""),
             v.get("phone", ""),
             v.get("province", ""),
+=======
+            v.get("license_plate", ""),
+            v.get("owner_name", ""),
+            v.get("phone", ""),
+            v.get("address", ""),
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
             v.get("confidence", "")
         ])
         
@@ -364,7 +430,10 @@ async def export_violations_csv():
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     active_ws.append(websocket)
+<<<<<<< HEAD
     print(f"[SERVER] ✅ WebSocket client connected. Total: {len(active_ws)}")
+=======
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
     try:
         # Gửi danh sách camera hiện tại ngay khi client kết nối
         camera_list = list(connected_cameras.values())
@@ -380,7 +449,10 @@ async def websocket_endpoint(websocket: WebSocket):
             await asyncio.sleep(0.1) # Tương đương 10 FPS cho UI
     except WebSocketDisconnect:
         active_ws.remove(websocket)
+<<<<<<< HEAD
         print(f"[SERVER] ❌ WebSocket client disconnected. Total: {len(active_ws)}")
+=======
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 
 if __name__ == "__main__":
     import uvicorn

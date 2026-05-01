@@ -5,7 +5,11 @@
 **Nhóm thực hiện:** Larry Phong Truc & Phan Thành Sang  
 **Đơn vị:** HCMUT AI Research - Trường Đại học Bách Khoa TP.HCM  
 **Giảng viên hướng dẫn:** ThS. Đinh Quốc Hùng  
+<<<<<<< HEAD
 **Ngày cập nhật:** 02/05/2026  
+=======
+**Ngày cập nhật:** 29/04/2026  
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 **Trạng thái tài liệu:** Bản chính thức (Final Draft) - Đã tích hợp Automation Test
 
 ---
@@ -44,7 +48,11 @@ Tài liệu này xác định các chiến lược, phạm vi, kịch bản và 
 - **Độ chính xác nhận diện biển số (OCR Accuracy):** ≥ 92%.  
 - **Độ trễ hệ thống (End-to-End Latency):** ≤ 1.5 giây (Thực tế Benchmark đạt trung bình **99.49ms**).  
 - **Tỷ lệ truyền tải MQTT (Message Delivery Rate):** ≥ 99.5%.  
+<<<<<<< HEAD
 - **Tỷ lệ vượt qua Test Case (Pass Rate):** 100% cho toàn bộ kịch bản kiểm thử (28/28 Test Cases).
+=======
+- **Tỷ lệ vượt qua Test Case (Pass Rate):** 100% cho toàn bộ kịch bản kiểm thử (19/19 Test Cases).
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 
 ---
 
@@ -83,6 +91,7 @@ Tài liệu này xác định các chiến lược, phạm vi, kịch bản và 
 
 ---
 
+<<<<<<< HEAD
 ## 6. KIỂM THỬ ĐÁNH GIÁ MÔ HÌNH AI (AI EVALUATION TESTS)
 | Mã TC | Tên Kịch Bản | Các Bước Thực Hiện | Kết Quả Mong Đợi | Trạng Thái |
 |-------|--------------|---------------------|------------------|------------|
@@ -95,6 +104,9 @@ Tài liệu này xác định các chiến lược, phạm vi, kịch bản và 
 ---
 
 ## 7. KIỂM THỬ PHI CHỨC NĂNG (NON-FUNCTIONAL TESTS)
+=======
+## 6. KIỂM THỬ PHI CHỨC NĂNG (NON-FUNCTIONAL TESTS)
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 | Mã TC | Phân Loại | Kịch bản & Điều kiện | Kết Quả Mong Đợi | Trạng Thái |
 |-------|-----------|----------------------|------------------|------------|
 | NF-01 | Stress Test | Đưa luồng video kẹt xe giờ cao điểm (> 50 phương tiện/frame) vào Jetson. | Hệ thống không Crash. FPS có thể giảm nhẹ nhưng vẫn tracking và gửi vi phạm bình thường. | ✅ PASS (Automated) |
@@ -104,11 +116,19 @@ Tài liệu này xác định các chiến lược, phạm vi, kịch bản và 
 
 ---
 
+<<<<<<< HEAD
 ## 8. BÁO CÁO AUTOMATION TEST (TÓM TẮT)
 Toàn bộ các test suite chức năng, phi chức năng và đánh giá AI đã được tự động hoá và vượt qua toàn bộ (**Pass Rate: 100% - 28/28 Test Cases**).
 Tham khảo các file:
 - `test_automation_full_suite.py` (Mô phỏng toàn bộ)
 - `test_automation_real.py` (Test triển khai thực tế trên Jetson)
+=======
+## 7. BÁO CÁO AUTOMATION TEST (TÓM TẮT)
+Toàn bộ các test suite chức năng và phi chức năng đã được tự động hoá và vượt qua toàn bộ (**Pass Rate: 100% - 19/19 Test Cases**).
+Tham khảo các file:
+- `test_automation_standalone.py` (Mô phỏng các Test Độc Lập)
+- `test_automation_integration.py` (Mô phỏng các Test Tích Hợp & Phi Chức Năng End-to-End)
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 - `TEST_AUTOMATION_COMPLETE_GUIDE.md` (Hướng dẫn chạy & đánh giá)
 
 Dưới đây là một số chỉ số Benchmark đạt được trong vòng Test Automation mới nhất (22/04/2026):
@@ -118,7 +138,11 @@ Dưới đây là một số chỉ số Benchmark đạt được trong vòng Te
 
 ---
 
+<<<<<<< HEAD
 ## 9. HƯỚNG DẪN THỰC THI (CHO BUỔI BẢO VỆ ĐỒ ÁN)
+=======
+## 8. HƯỚNG DẪN THỰC THI (CHO BUỔI BẢO VỆ ĐỒ ÁN)
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 ### Giai đoạn 1: Khởi động hệ thống (Preparation)
 - Mở Terminal trên PC/Laptop, khởi động Server: `uvicorn api_main:app --host 0.0.0.0 --port 8000`.  
 - Mở trình duyệt, truy cập `http://localhost:8000`.  
@@ -138,7 +162,11 @@ Dưới đây là một số chỉ số Benchmark đạt được trong vòng Te
 
 ---
 
+<<<<<<< HEAD
 ## 10. TIÊU CHÍ NGHIỆM THU (ACCEPTANCE CRITERIA)
+=======
+## 9. TIÊU CHÍ NGHIỆM THU (ACCEPTANCE CRITERIA)
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 Hệ thống được coi là hoàn thiện, đạt yêu cầu của Đồ án Tốt nghiệp và sẵn sàng triển khai thực tế khi:
 
 - Hoàn thành 100% các Kịch bản kiểm thử Chức năng (Functional) đạt trạng thái PASS (Đã hoàn thành qua Automation Test).  
@@ -148,4 +176,8 @@ Hệ thống được coi là hoàn thiện, đạt yêu cầu của Đồ án T
 
 **Xác nhận bởi:** Larry Phong Truc  
 **Chữ ký:** ___________________________  
+<<<<<<< HEAD
 **Ngày:** 01/05/2026
+=======
+**Ngày:** 29/04/2026
+>>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
