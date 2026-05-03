@@ -31,9 +31,10 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 import asyncio
 
-# Add project root to path
-PROJECT_ROOT = Path(__file__).parent.parent
+# Add project root to path - dùng .resolve() để luôn là đường dẫn tuyệt đối
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "edge"))  # để import utils trực tiếp
 
 
 # =====================================================================
@@ -282,7 +283,7 @@ class LocalJetsonRunner:
         try:
             # CPU Usage
             result = subprocess.run(
-                ["top", "-bn1"], capture_output=True, text=True, timeout=5
+                ["top", "-bn1"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5
             )
             import re
             match = re.search(r'(\d+\.\d+)\s*id', result.stdout)
@@ -292,7 +293,7 @@ class LocalJetsonRunner:
                 
             # RAM Usage
             result = subprocess.run(
-                ["free", "-m"], capture_output=True, text=True, timeout=5
+                ["free", "-m"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5
             )
             lines = result.stdout.split('\n')
             for line in lines:
@@ -308,7 +309,7 @@ class LocalJetsonRunner:
             try:
                 result = subprocess.run(
                     ["cat", "/sys/class/thermal/thermal_zone0/temp"],
-                    capture_output=True, text=True, timeout=2
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2
                 )
                 metrics.temperature = float(result.stdout.strip()) / 1000.0
             except:
@@ -318,7 +319,7 @@ class LocalJetsonRunner:
             try:
                 result = subprocess.run(
                     ["tegrastats", "--interval", "1000", "--stop"],
-                    capture_output=True, text=True, timeout=3
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=3
                 )
                 import re
                 match = re.search(r'GR3D\s+(\d+)%', result.stdout)
@@ -373,23 +374,27 @@ class RealDeploymentTests:
         
         try:
             metrics = self._get_metrics()
-            
-            # Test ping
-            if self.connection_type == "ssh" and self.ssh_conn:
+
+            # Test ping - dùng cú pháp Linux (-c/-W) vì chạy trên Jetson/Docker
+            target = self.ssh_conn.host if (self.connection_type == "ssh" and self.ssh_conn) else "8.8.8.8"
+            try:
                 result = subprocess.run(
-                    ["ping", "-n", "1", "-w", "2", self.ssh_conn.host],
-                    capture_output=True, text=True
+                    ["ping", "-c", "1", "-W", "2", target],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5
                 )
                 ping_ok = result.returncode == 0
-            else:
-                # Local ping test
-                result = subprocess.run(
-                    ["ping", "-n", "1", "-w", "2", "8.8.8.8"],
-                    capture_output=True, text=True
-                )
-                ping_ok = result.returncode == 0
-                
-            assert ping_ok, "Ping failed"
+            except FileNotFoundError:
+                # ping không có trong PATH của Docker → thử /bin/ping
+                try:
+                    result = subprocess.run(
+                        ["/bin/ping", "-c", "1", "-W", "2", target],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5
+                    )
+                    ping_ok = result.returncode == 0
+                except Exception:
+                    ping_ok = False
+
+            assert ping_ok, f"Ping tới {target} thất bại"
             
             duration = time.time() - start_time
             self.reporter.add_result(TestResult(
@@ -523,8 +528,17 @@ class RealDeploymentTests:
         
         try:
             # Test MongoDB connection thực
+            try:
+                from motor.motor_asyncio import AsyncIOMotorClient
+            except ImportError:
+                duration = time.time() - start_time
+                self.reporter.add_result(TestResult(
+                    test_id, test_name, "RealDeploy", "SKIP", duration,
+                    "motor chưa cài → bỏ qua. Chạy: pip install motor"
+                ))
+                return
+
             import asyncio
-            from motor.motor_asyncio import AsyncIOMotorClient
             
             MONGO_URI = "mongodb+srv://admin:admin123@cluster0.teleibk.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
             
@@ -739,11 +753,9 @@ class TestAIEvaluation:
         
         try:
             import sys
-            edge_path = str(PROJECT_ROOT / "edge")
-            if edge_path not in sys.path:
-                sys.path.insert(0, edge_path)
-                
-            from edge.utils.violation_engine import ViolationEngine
+            # PROJECT_ROOT / edge đã được thêm vào sys.path lúc import file này
+            # Nên import trực tiếp từ utils (không cần prefix 'edge.')
+            from utils.violation_engine import ViolationEngine
             engine = ViolationEngine()
             
             # Setup dummy zones config mock
@@ -769,7 +781,7 @@ class TestAIEvaluation:
             track_id = 1
             
             inf_start = time.time()
-            engine.check_violations(track_id, bbox, trajectory, light_status, zones_config)
+            engine.check_violations(track_id, bbox, trajectory, light_status, zones_config, stop_line_y=500)
             inf_time = time.time() - inf_start
             
             duration = time.time() - start_time
@@ -785,6 +797,75 @@ class TestAIEvaluation:
                 test_id, test_name, "AIEvaluation", "FAIL", duration, str(e)
             ))
 
+    def test_AI_06_inference_timing_log(self):
+        """AI-06: Đọc Inference Timing từ inference_timing.json do main_edge.py lưu"""
+        test_id = "AI-06"
+        test_name = "Inference Timing (Real Video)"
+        start_time = time.time()
+
+        timing_file = PROJECT_ROOT / "edge" / "inference_timing.json"
+
+        try:
+            if not timing_file.exists():
+                # Fallback: đo bằng YOLO 1 lần nếu chưa chạy main_edge.py
+                from ultralytics import YOLO
+                model_path = PROJECT_ROOT / "edge" / "models" / "yolo12n.pt"
+                if not model_path.exists():
+                    raise FileNotFoundError(f"Chưa có inference_timing.json và model cũng không tìm thấy.")
+                model = YOLO(str(model_path))
+                dummy = np.zeros((720, 1280, 3), dtype=np.uint8)
+                times_ms = []
+                for _ in range(5):
+                    t = time.time()
+                    model(dummy, verbose=False)
+                    times_ms.append((time.time() - t) * 1000)
+                data = {
+                    "avg_ms": round(sum(times_ms) / len(times_ms), 2),
+                    "avg_fps": round(1000.0 / (sum(times_ms) / len(times_ms)), 2),
+                    "min_ms": round(min(times_ms), 2),
+                    "max_ms": round(max(times_ms), 2),
+                    "total_frames": len(times_ms),
+                    "total_s": round(sum(times_ms) / 1000, 2),
+                    "source": "fallback_dummy"
+                }
+                note = "⚠️ Dùng dummy inference (chưa có inference_timing.json)"
+            else:
+                with open(timing_file, encoding="utf-8") as f:
+                    data = json.load(f)
+                note = f"📁 Đọc từ inference_timing.json ({data.get('timestamp','')})"
+
+            avg_ms  = data["avg_ms"]
+            avg_fps = data["avg_fps"]
+            min_ms  = data.get("min_ms", 0)
+            max_ms  = data.get("max_ms", 0)
+            frames  = data.get("total_frames", 0)
+            total_s = data.get("total_s", 0)
+
+            # PASS nếu avg < 200ms (Jetson yêu cầu tối thiểu ~5 FPS)
+            passed = avg_ms < 200
+
+            duration = time.time() - start_time
+            self.reporter.add_result(TestResult(
+                test_id, test_name, "AIEvaluation",
+                "PASS" if passed else "FAIL", duration,
+                f"Avg={avg_ms:.1f}ms (~{avg_fps:.1f}FPS) | Min={min_ms:.1f}ms | Max={max_ms:.1f}ms | Frames={frames} | {note}",
+                details=data,
+                metrics={
+                    "avg_inference_ms": avg_ms,
+                    "avg_fps": avg_fps,
+                    "min_ms": min_ms,
+                    "max_ms": max_ms,
+                    "total_frames": frames,
+                    "total_s": total_s,
+                }
+            ))
+        except Exception as e:
+            duration = time.time() - start_time
+            self.reporter.add_result(TestResult(
+                test_id, test_name, "AIEvaluation", "FAIL", duration, str(e)
+            ))
+
+
     def run_all(self):
         """Chạy tất cả AI Evaluation tests"""
         print("\n" + "="*60)
@@ -796,6 +877,7 @@ class TestAIEvaluation:
         self.test_AI_03_license_plate_detection()
         self.test_AI_04_ocr_reading()
         self.test_AI_05_violation_engine_stress()
+        self.test_AI_06_inference_timing_log()
 
 
 # =====================================================================
@@ -862,7 +944,8 @@ def main():
         print(f"{icon} {result.test_id}: {result.test_name} - {result.message}")
     
     # Save report
-    report_path = PROJECT_ROOT / "docs" / f"test_report_real_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    report_path = Path(__file__).resolve().parent / f"test_report_real_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    report_path.parent.mkdir(parents=True, exist_ok=True)  # Tạo thư mục nếu chưa có
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write(f"Real Deployment Test Report\n")
         f.write(f"Connection Type: {connection_type}\n")

@@ -48,6 +48,9 @@
                             <li class="nav-item">
                                 <button class="nav-link small py-1" id="video-tab" data-bs-toggle="tab" data-bs-target="#video-pane" type="button">PHẠT NGUỘI</button>
                             </li>
+                            <li class="nav-item">
+                                <button class="nav-link small py-1" id="ocr-tab" data-bs-toggle="tab" data-bs-target="#ocr-pane" type="button">TEST OCR</button>
+                            </li>
                         </ul>
 
                         <div class="tab-content" id="modeTabContent">
@@ -62,16 +65,16 @@
                                     <select id="video-file-select" class="form-select shadow-none">
                                         <option value="">Đang tải danh sách...</option>
                                     </select>
-<<<<<<< HEAD
                                     <button class="btn btn-outline-secondary" type="button" onclick="refreshEdgeFiles()">🔄</button>
                                 </div>
                                 <button onclick="sendControl('start', 'video')" class="btn btn-danger btn-sm w-100 mb-2 shadow-sm">CHẠY XỬ LÝ PHẠT</button>
                                 <button onclick="sendControl('start', 'video_local')" class="btn btn-warning btn-sm w-100 mb-2 shadow-sm text-dark fw-bold">XỬ LÝ LOCAL TRÊN KIT</button>
-=======
-                                    <button class="btn btn-outline-secondary" type="button" onclick="refreshEdgeFiles()">ðŸ”„</button>
-                                </div>
-                                <button onclick="sendControl('start', 'video')" class="btn btn-danger btn-sm w-100 mb-2 shadow-sm">CHẠY XỬ LÝ PHẠT</button>
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
+                            </div>
+
+                            <div class="tab-pane fade" id="ocr-pane">
+                                <label class="form-label small fw-bold">TEST ĐỌC BIỂN SỐ TỪ ẢNH</label>
+                                <input type="file" id="ocr-image-upload" class="form-control form-control-sm mb-2" accept="image/*">
+                                <button onclick="testOCR()" class="btn btn-primary btn-sm w-100 mb-2 shadow-sm">🚀 NHẬN DIỆN & TRA CỨU</button>
                             </div>
                         </div>
 
@@ -88,7 +91,7 @@
                       </div>
                       
                         <button id="stop-continue-btn" onclick="toggleStopContinue()" class="btn btn-outline-dark btn-sm w-100 border-2 fw-bold">DỪNG TẤT CẢ</button>
-                        <a href="/api/export_violations_csv" class="btn btn-info btn-sm w-100 border-2 fw-bold mt-2" download>XUẤT FILE CSV VI PHẠM</a>
+                        <button onclick="showExportModal()" class="btn btn-info btn-sm w-100 border-2 fw-bold mt-2">XUẤT DỮ LIỆU VI PHẠM</button>
                     </div>
                 </div>
 
@@ -113,11 +116,7 @@
                     <div id="roi-canvas" class="position-absolute top-0 start-0 w-100 h-100"></div>
 
                     <div id="stream-placeholder" class="position-absolute top-50 start-50 translate-middle text-center text-white-50">
-<<<<<<< HEAD
                         <h2 class="mb-3">🚦</h2>
-=======
-                        <h2 class="mb-3">ðŸš¦</h2>
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
                         <h5>CHƯA CÓ TÍN HIỆU</h5>
                         <p class="small">Vui lòng chọn Camera và nhấn Bắt đầu</p>
                     </div>
@@ -126,11 +125,7 @@
                 <div class="mt-2 bg-white p-2 rounded shadow-sm d-flex justify-content-between">
                     <div>
                         <button class="btn btn-sm btn-outline-primary fw-bold" onclick="toggleROILayer()">Ẩn/Hiện ROI</button>
-<<<<<<< HEAD
                         <button class="btn btn-sm btn-warning fw-bold ms-2" onclick="resetROI()">🔃 Reset ROI</button>
-=======
-                        <button class="btn btn-sm btn-warning fw-bold ms-2" onclick="resetROI()">ðŸ”„ Reset ROI</button>
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
                     </div>
                     <button class="btn btn-sm btn-primary fw-bold" onclick="saveROI()">Lưu & Áp dụng ROI</button>
                 </div>
@@ -176,7 +171,6 @@
                         <div class="col-md-5 ps-4">
                             <h6 class="fw-bold text-primary mb-3">THÔNG TIN CHI TIẾT</h6>
                             <ul class="list-group list-group-flush mb-4 small">
-<<<<<<< HEAD
                                 <li class="list-group-item d-flex justify-content-between px-0"><span>Loại lỗi:</span> <b id="modal-type" class="text-danger"></b></li>
                                 <li class="list-group-item d-flex justify-content-between px-0"><span>Chủ xe:</span> <b id="modal-owner"></b></li>
                                 <li class="list-group-item d-flex justify-content-between px-0"><span>SĐT:</span> <b id="modal-phone"></b></li>
@@ -186,17 +180,6 @@
                                 <li class="list-group-item d-flex justify-content-between px-0"><span>CCCD/CMND:</span> <b id="modal-id-card"></b></li>
                                 <li class="list-group-item d-flex justify-content-between px-0"><span>Thời gian:</span> <span id="modal-time" class="fw-bold"></span></li>
                                 <li class="list-group-item d-flex justify-content-between px-0"><span>Thiết bị:</span> <span id="modal-camera" class="badge bg-secondary"></span></li>
-=======
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>Loai loi:</span> <b id="modal-type" class="text-danger"></b></li>
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>Chu xe:</span> <b id="modal-owner"></b></li>
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>SDT:</span> <b id="modal-phone"></b></li>
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>Loai xe:</span> <b id="modal-class"></b></li>
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>Tinh/TP:</span> <b id="modal-province"></b></li>
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>Ngay dang ky:</span> <b id="modal-registration-date"></b></li>
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>CCCD/CMND:</span> <b id="modal-id-card"></b></li>
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>Thoi gian:</span> <span id="modal-time" class="fw-bold"></span></li>
-                                <li class="list-group-item d-flex justify-content-between px-0"><span>Thiet bi:</span> <span id="modal-camera" class="badge bg-secondary"></span></li>
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
                             </ul>
                             <div class="d-grid gap-2">
                                 <button class="btn btn-success fw-bold shadow-sm" onclick="approveViolation()">✅ Phê duyệt phạt</button>
@@ -209,21 +192,50 @@
         </div>
     </div>
 
+    <!-- Modal Xuất dữ liệu -->
+    <div class="modal fade" id="exportModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 shadow-lg">
+                <div class="modal-header bg-info text-white">
+                    <h5 class="modal-title fw-bold">XUẤT DỮ LIỆU VI PHẠM</h5>
+                    <button type="button" class="btn-close btn-close-white shadow-none" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">TỪ NGÀY</label>
+                        <input type="datetime-local" id="export-start" class="form-select form-control-sm shadow-none">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">ĐẾN NGÀY</label>
+                        <input type="datetime-local" id="export-end" class="form-select form-control-sm shadow-none">
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label small fw-bold d-block">ĐỊNH DẠNG FILE</label>
+                        <div class="btn-group w-100" role="group">
+                            <input type="radio" class="btn-check" name="exportFormat" id="fmt-csv" value="csv" checked>
+                            <label class="btn btn-outline-info" for="fmt-csv">CSV (Excel-friendly)</label>
+                            
+                            <input type="radio" class="btn-check" name="exportFormat" id="fmt-xlsx" value="xlsx">
+                            <label class="btn btn-outline-info" for="fmt-xlsx">Excel (XLSX)</label>
+                        </div>
+                    </div>
+                    <button onclick="doExport()" class="btn btn-primary w-100 fw-bold shadow-sm py-2">TẢI XUỐNG DỮ LIỆU</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=2"></script>
 
     <footer class="mt-4 py-3 bg-white border-top">
       <div class="container-fluid text-center">
           <p class="text-muted mb-0" style="font-size: 0.85rem;">
               &copy; 2025 <strong>LARRY VAN</strong>. All Rights Reserved. 
               <span class="mx-2">|</span> 
-<<<<<<< HEAD
               Phát triển bởi <strong>Larry Van</strong> - HCMUT
               <span class="mx-2">|</span>
               Hỗ trợ bởi <strong>Phan Thành Sang</strong> - HCMUT
-=======
-              Phát triển bởi <strong>Larry Van & Phan Thành Sang</strong> - HCMUT AI Research
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
               <span class="mx-2">|</span>
               Hướng dẫn bởi <strong>ThS. Đinh Quốc Hùng</strong>
           </p>

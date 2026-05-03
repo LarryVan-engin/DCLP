@@ -44,9 +44,21 @@ function connectWebSocket() {
         if (message.type === "realtime_update") {
             handleRealtimeStream(message);
         } else if (message.type === "violation") {
-            // Lưu đệm thông tin lỗi để mở Modal
-            violationHistory[message.data.track_id] = message.data; 
-            handleNewViolation(message.data);
+            const data = message.data;
+            const tid = data.track_id;
+
+            if (violationHistory[tid]) {
+                // Cùng ID: merge violation_type (tránh trùng lặp)
+                const existing = violationHistory[tid].violation_type || "";
+                const incoming = data.violation_type || "";
+                const mergedSet = new Set(
+                    [...existing.split("+"), ...incoming.split("+")]
+                        .map(s => s.trim()).filter(Boolean)
+                );
+                data.violation_type = Array.from(mergedSet).join(" + ");
+            }
+            violationHistory[tid] = data;
+            handleNewViolation(data);
         } else if (message.type === "file_list") {
             updateVideoSelect(message.files);
         } else if (message.type === "camera_list") {
@@ -54,7 +66,6 @@ function connectWebSocket() {
         } else if (message.type === "auto_roi_proposal") {
             // Nhận tọa độ đề xuất từ AI và vẽ lên màn hình để chỉnh sửa
             loadAutoROI(message.points);
-<<<<<<< HEAD
             const currentMode = pendingVideoStart ? pendingVideoStart.mode : "video";
             pendingVideoStart = {
                 action: "start",
@@ -80,14 +91,6 @@ function connectWebSocket() {
             }
             videoPlayer.style.display = 'block';
             videoPlayer.src = message.video_url;
-=======
-            pendingVideoStart = {
-                action: "start",
-                mode: "video",
-                video_name: message.video_name || document.getElementById('video-file-select').value
-            };
-            logSystem("🤖 AI đã đề xuất vùng giám sát (Auto-ROI). Hãy kéo thả để tinh chỉnh.");
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
         }
     };
 
@@ -141,19 +144,22 @@ function updateVideoSelect(files) {
 }
 
 function handleRealtimeStream(data) {
-    if (data.stream) {
-        streamPlaceholder.style.display = 'none';
-<<<<<<< HEAD
+    const activeCamera = document.getElementById('camera-select').value;
+    const heartbeat = data.heartbeats && data.heartbeats[activeCamera];
+
+    if (heartbeat && heartbeat.mode === 'video_local') {
+        streamImg.style.display = 'none';
         const videoPlayer = document.getElementById('local-video-player');
         if (videoPlayer) videoPlayer.style.display = 'none';
-=======
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
+        streamPlaceholder.style.display = 'flex';
+        streamPlaceholder.innerHTML = '<div class="text-center"><h4 class="text-warning fw-bold">🚀 ĐANG XỬ LÝ LOCAL TRÊN KIT</h4><p class="text-muted small">Edge đang phân tích cục bộ toàn bộ file video.<br>Màn hình stream bị tắt để tối đa hóa tài nguyên phần cứng.<br>Vui lòng theo dõi các thông số phân tích bên dưới.</p></div>';
+    } else if (data.stream) {
+        streamPlaceholder.style.display = 'none';
+        const videoPlayer = document.getElementById('local-video-player');
+        if (videoPlayer) videoPlayer.style.display = 'none';
         streamImg.style.display = 'block';
         streamImg.src = `data:image/jpeg;base64,${data.stream}`;
     }
-
-    const activeCamera = document.getElementById('camera-select').value;
-    const heartbeat = data.heartbeats && data.heartbeats[activeCamera];
 
     if (heartbeat) {
         document.getElementById('stat-car').innerText = heartbeat.stats.car || 0;
@@ -178,26 +184,31 @@ function handleNewViolation(violation) {
     const list = document.getElementById('violation-list');
     if (list.innerHTML.includes("Đang chờ dữ liệu")) list.innerHTML = "";
 
-    const card = document.createElement('div');
-    card.className = 'violation-card pointer-cursor';
-    // Đã gọi đúng ID để mở popup Modal
-    card.onclick = () => openViolationModal(violation.track_id); 
+    const cardId = `vcard-${violation.track_id}`;
+    let card = document.getElementById(cardId);
 
-    card.innerHTML = `
+    const cardHTML = `
         <div class="d-flex justify-content-between">
             <span class="violation-type">${violation.violation_type}</span>
             <span class="violation-time">${new Date(violation.timestamp).toLocaleTimeString()}</span>
         </div>
         <div class="violation-plate">${violation.plate_read || 'CHƯA ĐỌC ĐƯỢC BIỂN SỐ'}</div>
-<<<<<<< HEAD
         <div class="small text-muted mb-1">ID Xe: ${violation.track_id} | Chủ xe: ${violation.owner || 'N/A'}</div>
-=======
-        <div class="small text-muted mb-1">ID Xe: ${violation.track_id} | ChÃ¡Â»Â§ xe: ${violation.owner || 'N/A'}</div>
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
         <img src="data:image/jpeg;base64,${violation.vehicle_crop_base64}" alt="Violation Crop">
     `;
-    list.prepend(card);
-    logSystem(`🚨 Phát hiện vi phạm: ${violation.violation_type} - Biển số: ${violation.plate_read}`);
+
+    if (card) {
+        // Cập nhật card hiện có (cùng track_id) thay vì tạo card mới
+        card.innerHTML = cardHTML;
+    } else {
+        card = document.createElement('div');
+        card.id = cardId;
+        card.className = 'violation-card pointer-cursor';
+        card.onclick = () => openViolationModal(violation.track_id);
+        card.innerHTML = cardHTML;
+        list.prepend(card);
+    }
+    logSystem(`🚨 Vi phạm ID ${violation.track_id}: ${violation.violation_type} - Biển: ${violation.plate_read || 'N/A'}`);
 }
 
 function openViolationModal(trackId) {
@@ -438,13 +449,8 @@ function resetROI() {
     const videoName = (lastStartPayload && lastStartPayload.video_name) ||
         (pendingVideoStart && pendingVideoStart.video_name) ||
         selectedVideoName;
-<<<<<<< HEAD
     const resetMode = (pendingVideoStart && (pendingVideoStart.mode === "video" || pendingVideoStart.mode === "video_local")) ||
         (lastStartPayload && (lastStartPayload.mode === "video" || lastStartPayload.mode === "video_local")) ? "video" : "realtime";
-=======
-    const resetMode = (pendingVideoStart && pendingVideoStart.mode === "video") ||
-        (lastStartPayload && lastStartPayload.mode === "video") ? "video" : "realtime";
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 
     if (layer) {
         layer.destroyChildren();
@@ -543,24 +549,21 @@ async function sendPayload(payload) {
 
 async function sendControl(action, mode = 'realtime') {
     const cameraId = document.getElementById('camera-select').value;
+    if (!cameraId) {
+        alert("Vui lòng chọn Camera trước khi điều khiển!");
+        return;
+    }
     const videoName = document.getElementById('video-file-select').value;
 
     const payload = {
         action: action,
         mode: mode,
-<<<<<<< HEAD
         video_name: (mode === 'video' || mode === 'video_local') ? videoName : null
     };
 
     if (action === 'start' && (mode === 'video' || mode === 'video_local')) {
-=======
-        video_name: (mode === 'video') ? videoName : null
-    };
-
-    if (action === 'start' && mode === 'video') {
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
         payload.action = 'preview_video';
-        pendingVideoStart = { action: 'start', mode: 'video', video_name: videoName };
+        pendingVideoStart = { action: 'start', mode: mode, video_name: videoName };
         lastStartPayload = null;
         setStopButton(false);
         if (layer) {
@@ -582,14 +585,11 @@ async function sendControl(action, mode = 'realtime') {
         if (action === 'stop') {
             setStopButton(true);
             streamImg.style.display = 'none';
-<<<<<<< HEAD
             const videoPlayer = document.getElementById('local-video-player');
             if (videoPlayer) {
                 videoPlayer.pause();
                 videoPlayer.style.display = 'none';
             }
-=======
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
             streamPlaceholder.style.display = 'block';
         }
     } catch (error) {
@@ -609,3 +609,97 @@ function logSystem(msg) {
     systemLog.innerHTML += `<div>> [${now}] ${msg}</div>`;
     systemLog.scrollTop = systemLog.scrollHeight;
 }
+
+async function testOCR() {
+    const fileInput = document.getElementById('ocr-image-upload');
+    if (!fileInput.files.length) {
+        alert("Vui lòng chọn một ảnh để test OCR!");
+        return;
+    }
+
+    const file = fileInput.files[0];
+    const formData = new FormData();
+    formData.append("file", file);
+
+    logSystem("Đang gửi ảnh lên Server để phân tích OCR...");
+    
+    try {
+        const response = await fetch('/api/test_ocr', {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+        
+        if (response.ok) {
+            logSystem(`[OCR SUCCESS] Biển số: ${result.plate_text}`);
+            
+            // Re-use the violation modal UI for OCR result display
+            const v = {
+                violation_type: "TEST OCR",
+                plate_read: result.plate_text,
+                owner: result.owner_info.owner,
+                phone: result.owner_info.phone,
+                class_vehicle: result.owner_info.class_vehicle,
+                province: result.owner_info.province,
+                registration_date: result.owner_info.registration_date,
+                id_card: result.owner_info.id_card,
+                timestamp: new Date().toISOString(),
+                camera_id: "LOCAL_TEST",
+                vehicle_crop_base64: result.image_base64, // We can return the bounding box drawn image
+                plate_img_base64: result.plate_crop_base64
+            };
+            
+            violationHistory["test_ocr"] = v;
+            openViolationModal("test_ocr");
+
+        } else {
+            logSystem(`[OCR FAILED] ${result.detail || "Không nhận diện được"}`);
+            alert(`Lỗi OCR: ${result.detail || "Không nhận diện được"}`);
+        }
+    } catch (e) {
+        logSystem(`[OCR ERROR] Mất kết nối: ${e}`);
+    }
+}
+
+function showExportModal() {
+    const modal = new bootstrap.Modal(document.getElementById('exportModal'));
+    // Set default dates (today)
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 16);
+    const yesterday = new Date(now.getTime() - 24*60*60*1000);
+    const yesterdayStr = yesterday.toISOString().slice(0, 16);
+    
+    document.getElementById('export-start').value = yesterdayStr;
+    document.getElementById('export-end').value = todayStr;
+    
+    modal.show();
+}
+
+async function doExport() {
+    const start = document.getElementById('export-start').value;
+    const end = document.getElementById('export-end').value;
+    const format = document.querySelector('input[name="exportFormat"]:checked').value;
+    
+    if (!start || !end) {
+        alert("Vui lòng chọn khoảng thời gian!");
+        return;
+    }
+    
+    // Tạo URL với query params
+    const url = `/api/export_violations?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}&format=${format}`;
+    
+    logSystem(`Đang chuẩn bị xuất file ${format.toUpperCase()}...`);
+    
+    // Tải file
+    window.location.href = url;
+    
+    // Đóng modal
+    bootstrap.Modal.getInstance(document.getElementById('exportModal')).hide();
+}
+
+// Initialization logic
+document.addEventListener('DOMContentLoaded', () => {
+    initWebSocket();
+    initROI();
+});

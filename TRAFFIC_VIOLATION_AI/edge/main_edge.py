@@ -13,10 +13,7 @@ import time
 import os
 import sys
 import threading
-<<<<<<< HEAD
 import requests
-=======
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 import paho.mqtt.client as mqtt
 # Import Utils & Config
 import edge_config as cfg
@@ -36,11 +33,7 @@ from collections import defaultdict
 
 # Thêm đường dẫn để import shared schemas
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-<<<<<<< HEAD
 sys.path.append(BASE_DIR)
-=======
-sys.path.append(os.path.abspath(os.path.join(BASE_DIR, '..')))
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 from shared.schemas import ZoneDefinition
 
 # ====================== GLOBAL STATE & INIT ======================
@@ -203,7 +196,7 @@ def publish_violation(client, track_id, violation_type, vehicle_crop, conf):
 def get_active_source(mode=None, video_name=None):
     mode = mode or current_mode
     video_name = video_name or active_video
-    if mode == "video" and video_name:
+    if mode in ("video", "video_local") and video_name:
         return os.path.join(cfg.VIDEOS_DIR, video_name)
     return 0
 
@@ -246,10 +239,7 @@ def denormalize_points(points, width, height):
     return denormalized
 
 def build_zones_config(cmd, width, height):
-<<<<<<< HEAD
     global roi_polygon
-=======
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
     def convert_zone(zone):
         zone_copy = dict(zone)
         zone_copy["points"] = [
@@ -258,7 +248,6 @@ def build_zones_config(cmd, width, height):
         ]
         return ZoneDefinition(**zone_copy)
 
-<<<<<<< HEAD
     zones = {
         "lines": [convert_zone(z) for z in cmd.get("lines", [])],
         "polygons": [convert_zone(z) for z in cmd.get("polygons", [])]
@@ -272,12 +261,6 @@ def build_zones_config(cmd, width, height):
                     {"x": int(roi_polygon[1][0]), "y": int(roi_polygon[1][1])}]
         ))
     return zones
-=======
-    return {
-        "lines": [convert_zone(z) for z in cmd.get("lines", [])],
-        "polygons": [convert_zone(z) for z in cmd.get("polygons", [])]
-    }
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 
 def publish_video_roi_preview(client, video_name):
     global roi_polygon, active_video
@@ -346,11 +329,7 @@ def ai_processing_loop(client):
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     if fps == 0: fps = 30
     
-<<<<<<< HEAD
     video_basename = os.path.basename(str(source)) if current_mode in ('video', 'video_local') else 'realtime_output.mp4'
-=======
-    video_basename = os.path.basename(str(source)) if current_mode == 'video' else 'realtime_output.mp4'
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
     output_filename = f"processed_{int(time.time())}_{video_basename}"
     output_path = os.path.join(cfg.VIDEOS_DIR, output_filename)
     
@@ -367,6 +346,7 @@ def ai_processing_loop(client):
     total_violations = 0
     track_history = defaultdict(list)
     completed_naturally = False
+    inference_times = []  # Đo thời gian inference mỗi frame
 
     while is_running and cap.isOpened():
         ret, frame = cap.read()
@@ -375,12 +355,23 @@ def ai_processing_loop(client):
             completed_naturally = True
             break
             
+        original_frame = frame.copy()
         frame_count += 1
 
-        # HIỂN THỊ TRẠNG THÁI HỌC LÀN (giống full_main.py)
-        if not lane_detector.is_ready:
-            # Vẽ overlay thông báo đang học
+        # Xác định chế độ vận hành dựa trên zones_config
+        # Nếu có bất kỳ polygon nào mang nhãn "forbidden", ta bật Forbidden Mode
+        forbidden_zones = [z for z in zones_config.get("polygons", []) if z.label == "forbidden"]
+        is_forbidden_mode = len(forbidden_zones) > 0
+
+        # TỐI ƯU: Nếu là đường cấm, ép lane_detector dừng mọi hoạt động học để cứu tài nguyên
+        if is_forbidden_mode:
+            lane_detector.is_ready = True
+            lane_detector.car_only_zones = [] # Xóa mọi làn nếu có để tránh check nhầm
+
+        # 1.5. HIỆN THÔNG BÁO ĐANG HỌC LÀN (Chỉ hiện khi chưa xong và KHÔNG PHẢI đường cấm)
+        if not lane_detector.is_ready and not is_forbidden_mode:
             overlay = frame.copy()
+            frame_count = lane_detector.frame_count
             cv2.putText(overlay, f"LEARNING DATA-DRIVEN LANES... {frame_count}/{cfg.LANE_LEARNING_FRAMES}", 
                        (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 165, 255), 3)
             frame = overlay
@@ -390,25 +381,21 @@ def ai_processing_loop(client):
             if new_light != "unknown":
                 current_light = new_light
         
-        # 2. AI Inference & Tracking
-        results = model_vehicle.track(frame, persist=True, tracker=cfg.TRACKER_CONFIG, verbose=False)[0]
+        # 2. AI Inference & Tracking - Đo thời gian
+        t_infer_start = time.time()
+        results = model_vehicle.track(frame, persist=True, tracker=cfg.TRACKER_CONFIG, verbose=False, iou=0.45)[0]
+        inference_times.append((time.time() - t_infer_start) * 1000)  # ms
         
-        # Xác định chế độ vận hành dựa trên zones_config
-        # Nếu có bất kỳ polygon nào mang nhãn "forbidden", ta bật Forbidden Mode
-        forbidden_zones = [z for z in zones_config.get("polygons", []) if z.label == "forbidden"]
-        is_forbidden_mode = len(forbidden_zones) > 0
-
         cars = motorcycles = 0
+        track_ids = []
+        frame_roi_boxes = []
+        frame_roi_classes = []
 
         if results.boxes is not None and results.boxes.id is not None:
             boxes = results.boxes.xyxy.cpu().numpy()
             track_ids = results.boxes.id.int().cpu().tolist()
             confs = results.boxes.conf.cpu().numpy()
             classes = results.boxes.cls.cpu().numpy()
-
-            # Cập nhật dữ liệu học làn (giống full_main.py)
-            if not lane_detector.is_ready:
-                lane_detector.update_learning_data(boxes, classes)
 
             for box, track_id, conf, cls in zip(boxes, track_ids, confs, classes):
                 x1, y1, x2, y2 = map(int, box)
@@ -421,7 +408,18 @@ def ai_processing_loop(client):
                 # Kiểm tra xe có nằm trong ROI không (cv2.pointPolygonTest)
                 if cv2.pointPolygonTest(roi_polygon, (center_x, bottom_y), False) < 0:
                     continue  # Bỏ qua xe ngoài ROI
-                
+
+                # Lọc class: chỉ xử lý các loại xe (Car, Bus, Truck, Motorcycle)
+                # Class 0=person, 1=bicycle... -> bỏ qua để tránh box người lái chồng lên xe máy
+                VEHICLE_CLASSES = {2, 3, 5, 7}
+                if int(cls) not in VEHICLE_CLASSES:
+                    continue
+
+                # Lưu xe hợp lệ trong ROI để học làn (Chỉ khi cần thiết)
+                if not lane_detector.is_ready:
+                    frame_roi_boxes.append(box)
+                    frame_roi_classes.append(cls)
+
                 # Đếm xe
                 if int(cls) == 2: cars += 1
                 elif int(cls) == 3: motorcycles += 1
@@ -436,11 +434,7 @@ def ai_processing_loop(client):
                 new_violations_list = [] # Khởi tạo danh sách lỗi trống cho mỗi xe
                 
                 # --- LOGIC VI PHẠM (Chỉ xử phạt ở Mode Video hoặc có yêu cầu) ---
-<<<<<<< HEAD
                 if current_mode in ("video", "video_local"):
-=======
-                if current_mode == "video":
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
                     if is_forbidden_mode:
                         # ==========================================
                         # CHẾ ĐỘ ĐƯỜNG CẤM (FORBIDDEN MODE)
@@ -456,56 +450,27 @@ def ai_processing_loop(client):
                         # ==========================================
                         # CHẾ ĐỘ ĐƯỜNG BÌNH THƯỜNG (NORMAL MODE)
                         # ==========================================
-<<<<<<< HEAD
-=======
-                        if not lane_detector.is_ready: # Sửa lỗi gọi hàm ()
-                            lane_detector.update_learning_data(boxes, classes)
-                            
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
                         new_violations_list = violation_engine.check_violations(
                             track_id=track_id, bbox=[x1, y1, x2, y2], 
                             trajectory=path, light_status={"straight": current_light}, 
-                            zones_config=zones_config
+                            zones_config=zones_config,
+                            stop_line_y=roi_top_y
                         )
                         
                         # CHECK THÊM SAI LÀN AI TỰ ĐỘNG
-                        if lane_detector.is_ready:
+                        # LUẬT SAI LÀN: Chỉ kiểm tra nếu KHÔNG PHẢI chế độ Đường cấm
+                        if lane_detector.is_ready and not is_forbidden_mode:
                             if lane_detector.check_wrong_lane([x1, y1, x2, y2], cls):
-                                # Sửa lỗi Hashable List và dùng hàm .add()
                                 if "SAI LÀN" not in violation_engine.recorded_violations[track_id]:
                                     new_violations_list.append("SAI LÀN")
                                     violation_engine.recorded_violations[track_id].add("SAI LÀN")
                         
-<<<<<<< HEAD
 
-=======
-                        # ==========================================
-                        # KIỂM TRA VƯỢT ĐÈN DỰA TRÊN ROI (giống full_main.py)
-                        # ==========================================
-                        # Logic: Nếu xe đi qua đường stop line (roi_top_y) khi đèn đỏ/vàng
-                        center_y = (y1 + y2) // 2
-                        
-                        # Kiểm tra xe vừa đi qua đường stop line (từ dưới lên trên)
-                        if len(path) >= 2:
-                            prev_y = path[-2][1]
-                            curr_y = path[-1][1]
-                            
-                            # Xe đi từ dưới lên qua stop line
-                            if prev_y >= roi_top_y and curr_y < roi_top_y:
-                                if current_light == "red":
-                                    if "VƯỢT ĐÈN ĐỎ" not in violation_engine.recorded_violations[track_id]:
-                                        new_violations_list.append("VƯỢT ĐÈN ĐỎ")
-                                        violation_engine.recorded_violations[track_id].add("VƯỢT ĐÈN ĐỎ")
-                                elif current_light == "yellow":
-                                    if "VƯỢT ĐÈN VÀNG" not in violation_engine.recorded_violations[track_id]:
-                                        new_violations_list.append("VƯỢT ĐÈN VÀNG")
-                                        violation_engine.recorded_violations[track_id].add("VƯỢT ĐÈN VÀNG")
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
                     
                     # NẾU CÓ LỖI -> SMART CAPTURE & PUBLISH MQTT
                     if len(new_violations_list) > 0:
                         combo_violation_string = "+".join(new_violations_list)
-                        crop_img = smart_crop(frame, box, padding=cfg.SMART_CROP_PADDING)
+                        crop_img = smart_crop(original_frame, box, padding=cfg.SMART_CROP_PADDING)
                         publish_violation(client, track_id, combo_violation_string, crop_img, conf)
                         total_violations += 1
 
@@ -519,6 +484,20 @@ def ai_processing_loop(client):
                 for i in range(1, len(path)):
                     cv2.line(frame, path[i-1], path[i], color, 2)
 
+        # HỌC LÀN TỰ ĐỘNG: Chỉ chạy nếu có dữ liệu ROI và không phải Đường cấm
+        if not lane_detector.is_ready and frame_roi_boxes and not is_forbidden_mode:
+            lane_detector.update_learning_data(
+                np.array(frame_roi_boxes), np.array(frame_roi_classes)
+            )
+
+        # Kiểm tra mất tracking để phạt nguội lỗi Đèn Đỏ
+        active_tracks = set(track_ids)
+        lost_violations = violation_engine.cleanup_lost_tracks(active_tracks)
+        for v in lost_violations:
+            crop_img = smart_crop(original_frame, v["bbox"], padding=cfg.SMART_CROP_PADDING)
+            publish_violation(client, v["track_id"], v["violation_type"], crop_img, 0.8) # Default conf
+            total_violations += 1
+
         # 2.5. VẼ ROI VÀ CÁC LÀN ĐƯỜNG (giống full_main.py)
         # Vẽ khung ROI trước
         frame = draw_roi_on_frame(frame, roi_polygon.tolist())
@@ -528,11 +507,7 @@ def ai_processing_loop(client):
             frame = draw_lanes_on_frame(frame, lane_detector)
 
         # 3. Stream Frame realtime
-<<<<<<< HEAD
         if current_mode != "video_local" and frame_count % 3 == 0:
-=======
-        if frame_count % 3 == 0:
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
             # Dùng cv2.imencode trả về base64 tự viết lại nhanh ở đây để giảm phụ thuộc
             encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), cfg.STREAM_JPEG_QUALITY]
             _, buffer = cv2.imencode('.jpg', cv2.resize(frame, cfg.STREAM_RESOLUTION), encode_param)
@@ -544,6 +519,7 @@ def ai_processing_loop(client):
             current_fps = frame_count / (time.time() - start_time)
             heartbeat = {
                 "camera_id": cfg.CAMERA_ID,
+                "mode": current_mode,
                 "stats": {"car": cars, "motorcycle": motorcycles, "bus": 0, "truck": 0},
                 "lights": {"left": "unknown", "straight": current_light},
                 "fps": round(current_fps, 1),
@@ -551,19 +527,51 @@ def ai_processing_loop(client):
             }
             client.publish(cfg.TOPIC_STATUS, json.dumps(heartbeat), qos=0)
 
+        out.write(frame)
+
     # Dọn dẹp khi kết thúc
     cap.release()
     out.release()
     is_running = False
+
+    # IN & LƯU THỐNG KÊ INFERENCE
+    if inference_times:
+        avg_ms = sum(inference_times) / len(inference_times)
+        min_ms = min(inference_times)
+        max_ms = max(inference_times)
+        avg_fps = 1000.0 / avg_ms if avg_ms > 0 else 0
+        total_s = sum(inference_times) / 1000.0
+        print("\n" + "="*55)
+        print("[EDGE] 📊 INFERENCE TIMING REPORT")
+        print("="*55)
+        print(f"  Tổng frame xử lý   : {len(inference_times)}")
+        print(f"  Thời gian TB/frame : {avg_ms:.1f} ms  (~{avg_fps:.1f} FPS)")
+        print(f"  Nhanh nhất         : {min_ms:.1f} ms")
+        print(f"  Chậm nhất          : {max_ms:.1f} ms")
+        print(f"  Tổng thời gian     : {total_s:.1f} s")
+        print("="*55 + "\n")
+
+        # Lưu ra file để automation test đọc
+        timing_data = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "total_frames": len(inference_times),
+            "avg_ms": round(avg_ms, 2),
+            "avg_fps": round(avg_fps, 2),
+            "min_ms": round(min_ms, 2),
+            "max_ms": round(max_ms, 2),
+            "total_s": round(total_s, 2),
+        }
+        timing_file = os.path.join(BASE_DIR, "inference_timing.json")
+        try:
+            with open(timing_file, "w", encoding="utf-8") as f:
+                json.dump(timing_data, f, indent=2, ensure_ascii=False)
+            print(f"[EDGE] 💾 Đã lưu timing vào: {timing_file}")
+        except Exception as e:
+            print(f"[EDGE] ⚠️ Không thể lưu timing file: {e}")
     
     # 5. Gửi gói Complete khi xử lý xong (Chỉ ở mode Video)
-<<<<<<< HEAD
     should_publish_complete = current_mode in ("video", "video_local") and completed_naturally
     if current_mode in ("video", "video_local") and stop_reason == "reset_roi":
-=======
-    should_publish_complete = current_mode == "video" and completed_naturally
-    if current_mode == "video" and stop_reason == "reset_roi":
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
         print("[EDGE] Đã dừng video để xử lý ROI.")
     stop_reason = None
 
@@ -578,15 +586,14 @@ def ai_processing_loop(client):
         client.publish(cfg.TOPIC_COMPLETE, json.dumps(complete_pkt), qos=1)
         print(f"[EDGE] Đã gửi gói Complete. Tổng lỗi: {total_violations}")
 
-<<<<<<< HEAD
-    # 6. Upload file mp4 nếu đang chạy mode video_local
-    if current_mode == "video_local" and completed_naturally:
+    # 6. Upload file mp4 nếu đang chạy mode video_local hoặc video
+    if current_mode in ("video", "video_local") and completed_naturally:
         try:
             print(f"[EDGE] Đang upload video kết quả lên Server: {output_path}")
             with open(output_path, 'rb') as f:
-                files = {'video': f}
+                files = {'file': f}
                 data = {'processing_time_seconds': round(time.time() - start_time, 2)}
-                api_url = f"http://{cfg.MQTT_BROKER}:8000/api/upload_video/{cfg.CAMERA_ID}"
+                api_url = f"http://{cfg.MQTT_BROKER}:8000/api/upload_video"
                 res = requests.post(api_url, files=files, data=data)
                 if res.status_code == 200:
                     print(f"[EDGE] Upload thành công: {res.json()}")
@@ -595,8 +602,6 @@ def ai_processing_loop(client):
         except Exception as e:
             print(f"[EDGE] Lỗi kết nối upload video: {e}")
 
-=======
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 def send_idle_heartbeat(client):
     """Gửi heartbeat định kỳ khi Edge đang ở trạng thái chờ (Idle)"""
     def heartbeat_thread():
@@ -643,13 +648,9 @@ def on_message(client, userdata, msg):
                 zones_config = {}
                 violation_engine.reset()
                 lane_detector.reset_learning()
-<<<<<<< HEAD
                 current_mode = "video" if cmd.get("action") == "preview_video" and current_mode != "video_local" else current_mode
                 if current_mode not in ("video", "video_local"):
                     current_mode = "video"
-=======
-                current_mode = "video"
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
                 if was_running:
                     time.sleep(0.2)
                 publish_video_roi_preview(client, cmd.get("video_name"))
@@ -698,11 +699,7 @@ def on_message(client, userdata, msg):
                 if not is_running:
                     current_mode = cmd.get("mode", "realtime")
                     active_video = cmd.get("video_name")
-<<<<<<< HEAD
                     if current_mode in ("video", "video_local") and not cmd.get("roi"):
-=======
-                    if current_mode == "video" and not cmd.get("roi"):
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
                         print("[EDGE] Preview frame, khong xu ly.")
                         publish_video_roi_preview(client, active_video)
                         return

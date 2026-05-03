@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 """
-=======
-﻿"""
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 ********************************************************************************************************************
 Project:      Traffic Violation Detection (Pro Version - MQTT Hybrid)
 File:         server/api_main.py
@@ -15,21 +11,15 @@ import base64
 import os
 import json
 import re
-<<<<<<< HEAD
+import shutil
 from contextlib import asynccontextmanager
-=======
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 import cv2
 import numpy as np
 import pandas as pd
 import paho.mqtt.client as mqtt
 from datetime import datetime
 from typing import Dict, List
-<<<<<<< HEAD
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Form
-=======
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from ultralytics import YOLO
@@ -53,16 +43,13 @@ MQTT_PORT = 1883
 MQTT_CLIENT_ID = "TRAFFIC_SERVER_01"
 
 # MongoDB Settings (Atlas)
-<<<<<<< HEAD
 MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://admin:admin123@cluster0.iipaqpd.mongodb.net/?appName=Cluster0")
-=======
-MONGO_URI = "mongodb+srv://admin:admin123@cluster0.teleibk.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 
 os.makedirs(VIOLATION_DIR, exist_ok=True)
+PROCESSED_VIDEOS_DIR = os.path.join(BASE_DIR, "processed_videos")
+os.makedirs(PROCESSED_VIDEOS_DIR, exist_ok=True)
 
 # ====================== INITIALIZATION ======================
-<<<<<<< HEAD
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Quản lý vòng đời ứng dụng: Khởi tạo và Giải phóng tài nguyên"""
@@ -102,9 +89,6 @@ async def lifespan(app: FastAPI):
     print("[SERVER] 🛑 Resources cleaned up (MQTT stopped, MongoDB closed).")
 
 app = FastAPI(title="AI Traffic Monitoring Server", lifespan=lifespan)
-=======
-app = FastAPI(title="AI Traffic Monitoring Server")
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 
 # Load Models & Database
@@ -128,16 +112,10 @@ current_stream_frame = "" # Base64 frame
 connected_cameras = {}  # {camera_id: {id, location, last_seen}}
 
 # ====================== MONGODB CONNECTION ======================
-<<<<<<< HEAD
 client = AsyncIOMotorClient(MONGO_URI, serverSelectionTimeoutMS=5000)
 db = client.traffic_db
 violations_col = db.violations
 mongodb_connected = False
-=======
-client = AsyncIOMotorClient(MONGO_URI)
-db = client.traffic_db
-violations_col = db.violations
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 
 # ====================== MQTT LOGIC ======================
 def on_connect(client, userdata, flags, rc):
@@ -205,11 +183,7 @@ async def handle_mqtt_message(msg):
                     "points": data.get("points", [])
                 })
         except Exception as e:
-<<<<<<< HEAD
             print(f"[SERVER] Lỗi parse ROI preview: {e}")
-=======
-            print(f"[SERVER] Loi parse ROI preview: {e}")
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 
     elif "violation/" in topic:
         data = json.loads(payload)
@@ -263,7 +237,6 @@ async def process_violation(data: dict):
             "processed_at": datetime.now().isoformat()
         }
 
-<<<<<<< HEAD
         # Lưu MongoDB Atlas với retry
         max_retries = 3
         for attempt in range(max_retries):
@@ -279,10 +252,6 @@ async def process_violation(data: dict):
                     with open(backup_path, 'w', encoding='utf-8') as f:
                         json.dump(violation_doc, f, ensure_ascii=False)
                     print(f"[SERVER] ⚠️ Backup saved to local: {backup_path}")
-=======
-        # Lưu MongoDB Atlas
-        result = await violations_col.insert_one(violation_doc.copy())
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 
         # Đẩy qua WebSocket lên UI (Phải bỏ ObjectId đi vì JSON không serialize được)
         if "_id" in violation_doc:
@@ -312,21 +281,6 @@ mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 loop = None  # Khởi tạo biến rỗng, sẽ gán sau
 
-<<<<<<< HEAD
-=======
-# Sử dụng Lifespan hook của FastAPI để đồng bộ Event Loop
-@app.on_event("startup")
-async def startup_event():
-    global loop
-    # Lấy CHÍNH XÁC Event Loop đang sống của Uvicorn
-    loop = asyncio.get_running_loop() 
-    
-    # Bắt đầu kết nối MQTT sau khi Web Server đã chạy
-    mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
-    mqtt_client.loop_start()
-    print("[SERVER] Khởi động luồng MQTT nền thành công.")
-
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 # ====================== API ENDPOINTS ======================
 @app.get("/")
 async def get_dashboard():
@@ -348,7 +302,6 @@ async def control_edge(request: Request, camera_id: str):
     print(f"[SERVER MQTT] Published command to {topic}: {cmd.get('action')}")
     return {"status": "ok", "message": f"Command sent to {camera_id}"}
 
-<<<<<<< HEAD
 @app.post("/api/upload_video/{camera_id}")
 async def upload_video(camera_id: str, video: UploadFile = File(...), processing_time_seconds: float = Form(...)):
     save_dir = os.path.join(BASE_DIR, "static", "videos")
@@ -370,70 +323,136 @@ async def upload_video(camera_id: str, video: UploadFile = File(...), processing
         
     return {"status": "success", "file": video.filename}
 
-=======
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 import csv
 import io
 from fastapi.responses import StreamingResponse
 
-@app.get("/api/export_violations_csv")
-async def export_violations_csv():
-    # Query all violations from MongoDB
-    cursor = violations_col.find({})
+@app.get("/api/export_violations")
+async def export_violations(start_date: str = None, end_date: str = None, format: str = "csv"):
+    """
+    Xuất dữ liệu vi phạm với bộ lọc thời gian và định dạng tùy chọn (csv/xlsx).
+    """
+    query = {}
+    if start_date and end_date:
+        # Giả định timestamp lưu theo định dạng ISO hoặc có thể so sánh chuỗi
+        query["timestamp"] = {"$gte": start_date, "$lte": end_date}
+    
+    cursor = violations_col.find(query).sort("timestamp", -1)
     violations = await cursor.to_list(length=None)
     
-    # Create CSV in memory
-    output = io.StringIO()
-    writer = csv.writer(output)
+    if not violations:
+        return JSONResponse(status_code=404, content={"detail": "Không có dữ liệu trong khoảng thời gian này."})
+
+    # Chuyển đổi sang DataFrame để xử lý dễ dàng
+    df = pd.DataFrame(violations)
     
-<<<<<<< HEAD
-    # Define headers based on actual schema
-    headers = [
-        "timestamp", "camera_id", "violation_type", "plate_read",
-        "owner", "phone", "province", "confidence"
-=======
-    # Define headers based on schema
-    headers = [
-        "timestamp", "camera_id", "violation_type", "license_plate",
-        "owner_name", "phone", "address", "confidence"
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
-    ]
-    writer.writerow(headers)
-    
-    for v in violations:
-        writer.writerow([
-            v.get("timestamp", ""),
-            v.get("camera_id", ""),
-            v.get("violation_type", ""),
-<<<<<<< HEAD
-            v.get("plate_read", ""),
-            v.get("owner", ""),
-            v.get("phone", ""),
-            v.get("province", ""),
-=======
-            v.get("license_plate", ""),
-            v.get("owner_name", ""),
-            v.get("phone", ""),
-            v.get("address", ""),
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
-            v.get("confidence", "")
-        ])
+    # Loại bỏ ObjectId của MongoDB để tránh lỗi khi xuất file
+    if "_id" in df.columns:
+        df = df.drop(columns=["_id"])
         
-    output.seek(0)
-    return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=violations.csv"}
-    )
+    # Chọn và sắp xếp lại các cột quan trọng
+    cols = ["timestamp", "camera_id", "violation_type", "plate_read", "owner", "phone", "province", "confidence"]
+    df = df[cols] if all(c in df.columns for c in cols) else df
+
+    if format == "xlsx":
+        # Xuất Excel
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df.to_excel(writer, index=False, sheet_name='Violations')
+        output.seek(0)
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=violations_{datetime.now().strftime('%Y%m%d')}.xlsx"}
+        )
+    else:
+        # Xuất CSV
+        output = io.StringIO()
+        df.to_csv(output, index=False, encoding='utf-8-sig')
+        output.seek(0)
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=violations_{datetime.now().strftime('%Y%m%d')}.csv"}
+        )
+
+@app.post("/api/test_ocr")
+async def test_ocr_endpoint(file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+        nparr = np.frombuffer(contents, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if frame is None:
+            return JSONResponse(status_code=400, content={"detail": "Không thể đọc được ảnh."})
+            
+        res = plate_model(frame, verbose=False)[0]
+        if len(res.boxes) == 0:
+            return JSONResponse(status_code=400, content={"detail": "Không tìm thấy biển số trong ảnh."})
+            
+        box = res.boxes[0].xyxy[0].cpu().numpy().astype(int)
+        
+        # Vẽ box lên ảnh gốc để hiển thị
+        annotated_frame = frame.copy()
+        cv2.rectangle(annotated_frame, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
+        _, img_buf = cv2.imencode(".jpg", annotated_frame)
+        image_base64 = base64.b64encode(img_buf).decode()
+        
+        text, success = read_license_plate_vn(frame, box[0], box[1], box[2], box[3])
+        
+        if not success:
+            return JSONResponse(status_code=400, content={"detail": "Không thể trích xuất chữ từ biển số."})
+            
+        # Cắt ảnh biển số
+        p_crop = frame[max(0, box[1]):box[3], max(0, box[0]):box[2]]
+        _, p_buf = cv2.imencode(".jpg", p_crop)
+        plate_crop_base64 = base64.b64encode(p_buf).decode()
+        
+        clean_plate = re.sub(r"[^A-Z0-9]", "", text.upper())
+        owner_info = vehicle_db.get(clean_plate, {})
+        
+        return {
+            "plate_text": text,
+            "owner_info": {
+                "owner": owner_info.get("owner", "Không tìm thấy"),
+                "phone": owner_info.get("phone", "N/A"),
+                "class_vehicle": owner_info.get("class_vehicle", "N/A"),
+                "province": owner_info.get("province", "N/A"),
+                "registration_date": owner_info.get("registration_date", "N/A"),
+                "id_card": owner_info.get("id_card", "N/A")
+            },
+            "image_base64": image_base64,
+            "plate_crop_base64": plate_crop_base64
+        }
+        
+    except Exception as e:
+        print(f"[TEST OCR ERROR] {e}")
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+@app.post("/api/upload_video")
+async def upload_video(file: UploadFile = File(...)):
+    try:
+        if not file.filename:
+            return JSONResponse(status_code=400, content={"detail": "Không có tên file."})
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{timestamp}_{file.filename}"
+        file_path = os.path.join(PROCESSED_VIDEOS_DIR, filename)
+        
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        print(f"[SERVER] Đã lưu video xử lý: {filename}")
+        return {"status": "success", "filename": filename, "path": file_path}
+    except Exception as e:
+        print(f"[SERVER] Lỗi khi lưu video: {e}")
+        return JSONResponse(status_code=500, content={"detail": str(e)})
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     active_ws.append(websocket)
-<<<<<<< HEAD
     print(f"[SERVER] ✅ WebSocket client connected. Total: {len(active_ws)}")
-=======
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
     try:
         # Gửi danh sách camera hiện tại ngay khi client kết nối
         camera_list = list(connected_cameras.values())
@@ -449,10 +468,7 @@ async def websocket_endpoint(websocket: WebSocket):
             await asyncio.sleep(0.1) # Tương đương 10 FPS cho UI
     except WebSocketDisconnect:
         active_ws.remove(websocket)
-<<<<<<< HEAD
         print(f"[SERVER] ❌ WebSocket client disconnected. Total: {len(active_ws)}")
-=======
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
 
 if __name__ == "__main__":
     import uvicorn

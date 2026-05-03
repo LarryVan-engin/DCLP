@@ -1,0 +1,16 @@
+Real Deployment Test Report
+Connection Type: local
+Timestamp: 2026-05-03T04:46:53.704366
+
+RD-01: FAIL - Ping tới 8.8.8.8 thất bại
+RD-02: FAIL - FPS too low: 0.0
+RD-03: PASS - Latency: 0.0ms
+RD-04: PASS - Temp: 42.5°C, RAM: 86.3%
+RD-05: PASS - Violations: 0
+RD-06: SKIP - motor chưa cài → bỏ qua. Chạy: pip install motor
+AI-01: FAIL - cannot import name 'YOLO' from 'ultralytics' (unknown location)
+AI-02: FAIL - cannot import name 'YOLO' from 'ultralytics' (unknown location)
+AI-03: FAIL - cannot import name 'YOLO' from 'ultralytics' (unknown location)
+AI-04: SKIP - Skipped OCR test (missing dependencies or easyocr error): No module named 'module_utils'
+AI-05: FAIL - No module named 'utils'
+AI-06: FAIL - cannot import name 'YOLO' from 'ultralytics' (unknown location)

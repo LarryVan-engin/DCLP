@@ -2,11 +2,13 @@
 
 # ByteTrack tracker defaults for mode="track"
 # Docs: https://docs.ultralytics.com/modes/track/
+# Tinh chỉnh cho xe máy di chuyển nhanh: giảm track_buffer để xóa hồn ma sớm hơn,
+# tăng new_track_thresh để tránh tạo track rác từ xe nhỏ.
 
-tracker_type: bytetrack # (str) Tracker backend: botsort|bytetrack; choose bytetrack for the classic baseline
-track_high_thresh: 0.25 # (float) First-stage match threshold; raise for cleaner tracks, lower to keep more
-track_low_thresh: 0.1 # (float) Second-stage threshold for low-score matches; balances recovery vs drift
-new_track_thresh: 0.45 # (float) Start a new track if no match ≥ this; higher reduces false tracks
-track_buffer: 60 # (int) Frames to keep lost tracks alive; higher handles occlusion, increases ID switches risk
-match_thresh: 0.8 # (float) Association similarity threshold (IoU/cost); tune with detector quality
-fuse_score: True # (bool) Fuse detection score with motion/IoU for matching; stabilizes weak detections
+tracker_type: bytetrack # (str) Tracker backend: botsort|bytetrack
+track_high_thresh: 0.35  # (float) Tăng lên để lọc bớt detection mờ của xe máy
+track_low_thresh: 0.15   # (float) Ngưỡng phụ khi detection điểm thấp
+new_track_thresh: 0.55   # (float) Tăng lên để tránh tạo track rác từ box nhỏ
+track_buffer: 25         # (int) Giảm xuống: xóa hồn ma nhanh hơn, tránh box zombie xe máy
+match_thresh: 0.7        # (float) Giảm nhẹ: linh hoạt hơn khi xe máy di chuyển nhanh
+fuse_score: True         # (bool) Giữ nguyên: ổn định detection yếu

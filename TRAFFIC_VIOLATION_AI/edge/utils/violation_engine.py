@@ -14,11 +14,8 @@ from typing import List, Tuple, Dict
 from collections import defaultdict
 
 # Thêm đường dẫn để import shared module
-<<<<<<< HEAD
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-=======
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
->>>>>>> 65c88697ab3154123c83279bfe37c9179fb61913
+import edge_config as cfg
 from shared.zones_utils import (
     check_vehicle_crossed_line, 
     check_wrong_way, 
@@ -40,11 +37,14 @@ class ViolationEngine:
                          bbox: List[int], 
                          trajectory: List[Tuple[int, int]], 
                          light_status: Dict[str, str], 
-                         zones_config: dict) -> List[str]:
+                         zones_config: dict,
+                         stop_line_y: int = None) -> List[str]:
         """
-        Quét toàn bộ luật vi phạm. Trả về danh sách các lỗi mới phát hiện ở frame hiện tại.
+        Quét toàn bộ luật vi phạm.
+        stop_line_y: Tọa độ Y pixel của vạch dừng (đỉnh ROI).
         """
         detected_new_violations = []
+        x1, y1, x2, y2 = bbox
         bottom_center = get_bottom_center(bbox)
         
         # =================================================================
@@ -56,34 +56,49 @@ class ViolationEngine:
             suspect_data = self.pending_red_lights[track_id]
             suspect_data["frames_waited"] += 1
             
-            # Đợi 15 frame để xem xe đi thẳng hay rẽ phải
-            if suspect_data["frames_waited"] >= 15:
-                start_p = suspect_data["cross_point"]
-                dx = bottom_center[0] - start_p[0]
-                dy = bottom_center[1] - start_p[1]
-                
-                # Logic rẽ phải: Trục X thay đổi nhiều hơn trục Y
-                is_turning_right = dx > 15 and dx > abs(dy) * 0.35
-                
-                if not is_turning_right:
-                    if "VƯỢT ĐÈN ĐỎ" not in self.recorded_violations[track_id]:
-                        detected_new_violations.append("VƯỢT ĐÈN ĐỎ")
-                        self.recorded_violations[track_id].add("VƯỢT ĐÈN ĐỎ")
-                        
+            start_p = suspect_data["cross_point"]
+            dx = bottom_center[0] - start_p[0]
+            dy = bottom_center[1] - start_p[1]
+            
+            # Logic rẽ phải: Trục X thay đổi nhiều hơn trục Y
+            is_turning_right = dx > 15 and dx > abs(dy) * 0.35
+            
+            if is_turning_right:
+                # Nếu rẽ phải -> Xóa án chờ (không phạt)
+                del self.pending_red_lights[track_id]
+            elif suspect_data["frames_waited"] >= cfg.RED_LIGHT_WAIT_FRAMES:
+                # Hết số frame chờ mà không rẽ phải -> CHỐT LỖI
+                if "VƯỢT ĐÈN ĐỎ" not in self.recorded_violations[track_id]:
+                    detected_new_violations.append("VƯỢT ĐÈN ĐỎ")
+                    self.recorded_violations[track_id].add("VƯỢT ĐÈN ĐỎ")
                 del self.pending_red_lights[track_id]
         else:
-            for line_zone in zones_config.get("lines", []):
-                if line_zone.label == "stop_line":
-                    if check_vehicle_crossed_line(trajectory, line_zone):
-                        if current_light == "red":
-                            self.pending_red_lights[track_id] = {
-                                "cross_point": bottom_center,
-                                "frames_waited": 0
-                            }
-                        elif current_light == "yellow":
-                            if "VƯỢT ĐÈN VÀNG" not in self.recorded_violations[track_id]:
-                                detected_new_violations.append("VƯỢT ĐÈN VÀNG")
-                                self.recorded_violations[track_id].add("VƯỢT ĐÈN VÀNG")
+            # ƯU TIÊN: So sánh Y trực tiếp (giống demo code) - chính xác, nhanh
+            # Điều kiện: TÂM Bounding Box (center_y) đã vượt lên phía trên stop_line_y
+            crossed = False
+            if stop_line_y is not None:
+                center_y = (y1 + y2) // 2
+                crossed = (center_y < stop_line_y)
+            else:
+                # Fallback: dùng line intersection nếu không có stop_line_y
+                for line_zone in zones_config.get("lines", []):
+                    if line_zone.label == "stop_line":
+                        if check_vehicle_crossed_line(trajectory, line_zone):
+                            crossed = True
+                            break
+
+            if crossed:
+                if current_light == "red":
+                    if track_id not in self.pending_red_lights:
+                        self.pending_red_lights[track_id] = {
+                            "cross_point": bottom_center,
+                            "frames_waited": 0,
+                            "bbox": bbox
+                        }
+                elif current_light == "yellow":
+                    if "VƯỢT ĐÈN VÀNG" not in self.recorded_violations[track_id]:
+                        detected_new_violations.append("VƯỢT ĐÈN VÀNG")
+                        self.recorded_violations[track_id].add("VƯỢT ĐÈN VÀNG")
 
         # =================================================================
         # LUẬT 2: ĐI NGƯỢC CHIỀU
@@ -154,6 +169,24 @@ class ViolationEngine:
             self.wrong_way_candidates[track_id] = 0
 
         return self.wrong_way_candidates[track_id] >= min_consecutive_frames
+
+    def cleanup_lost_tracks(self, active_tracks: set) -> List[dict]:
+        """Kiểm tra xe đang chờ phạt Đèn Đỏ nhưng mất tracking -> Chốt lỗi."""
+        lost_violations = []
+        lost_tracks = [t for t in self.pending_red_lights.keys() if t not in active_tracks]
+        
+        for track_id in lost_tracks:
+            # Nếu mất tracking -> Coi như đi thẳng vượt đèn đỏ
+            if "VƯỢT ĐÈN ĐỎ" not in self.recorded_violations[track_id]:
+                lost_violations.append({
+                    "track_id": track_id,
+                    "violation_type": "VƯỢT ĐÈN ĐỎ",
+                    "bbox": self.pending_red_lights[track_id]["bbox"]
+                })
+                self.recorded_violations[track_id].add("VƯỢT ĐÈN ĐỎ")
+            del self.pending_red_lights[track_id]
+            
+        return lost_violations
 
     def reset(self):
         """Xóa trắng bộ nhớ khi chuyển đổi video hoặc reset hệ thống"""

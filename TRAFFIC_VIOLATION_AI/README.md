@@ -201,7 +201,7 @@ scp <tên_file> <tên_user_jetson>@<IP_của_Jetson>:/home/<tên_user_jetson>/ed
 **BƯỚC 1: Di chuyển vào thư mục chứa code**
 Trên Terminal của Jetson Nano, đi tới thư mục chứa file `main_edge.py`:
 ```bash
-cd /home/<user>/Traffic_Project/edge
+cd /home/<user>/edge
 ```
 
 **BƯỚC 2: Tải và Chạy Docker (Đã thêm Volume & Network)**
@@ -227,6 +227,9 @@ pip install "paho-mqtt<2.0.0"
 pip install pydantic
 
 export PYTHONPATH=/ultralytics:$PYTHONPATH
+
+# Nếu cần cài nano
+sudo apt update && sudo apt install nano -y
 
 # Khởi động hệ thống Edge (Jetson Nano)
 python3 main_edge.py

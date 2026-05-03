@@ -19,7 +19,7 @@ CAMERA_ID = "JETSON_01"
 # 2. CẤU HÌNH KẾT NỐI MQTT
 # ==========================================
 # Khuyến nghị dùng IP tĩnh của Server Local hoặc HiveMQ Cloud
-MQTT_BROKER = "192.168.1.5" 
+MQTT_BROKER = "10.28.130.157" 
 MQTT_PORT = 1883
 MQTT_CLIENT_ID = f"{CAMERA_ID}_CLIENT"
 MQTT_KEEPALIVE = 60
@@ -62,7 +62,7 @@ STREAM_RESOLUTION = (640, 360) # Độ phân giải luồng Realtime đẩy lên
 # Cấu hình Violation Engine
 MAX_TRACK_HISTORY = 30         # Số lượng frame lưu vết quỹ đạo cho mỗi xe
 MIN_FRAMES_WRONG_WAY = 15      # Số frame tối thiểu để xác nhận đi ngược chiều
-RED_LIGHT_WAIT_FRAMES = 15     # Số frame chờ để xác nhận đi thẳng hay rẽ phải
+RED_LIGHT_WAIT_FRAMES = 3      # Số frame chờ để xác nhận đi thẳng hay rẽ phải
 
 # ==========================================
 # 5. CẤU HÌNH ROI (Region of Interest) - Calibration
