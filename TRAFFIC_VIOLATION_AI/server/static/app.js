@@ -294,15 +294,23 @@ function handleRealtimeStream(data) {
     if (heartbeat && heartbeat.mode === 'video_local') {
         streamImg.style.display = 'none';
         const videoPlayer = document.getElementById('local-video-player');
-        if (videoPlayer) videoPlayer.style.display = 'none';
-        streamPlaceholder.style.display = 'flex';
-        streamPlaceholder.innerHTML = '<div class="text-center"><h4 class="text-warning fw-bold">🚀 ĐANG XỬ LÝ LOCAL TRÊN KIT</h4><p class="text-muted small">Edge đang phân tích cục bộ toàn bộ file video.<br>Màn hình stream bị tắt để tối đa hóa tài nguyên phần cứng.<br>Vui lòng theo dõi các thông số phân tích bên dưới.</p></div>';
+        const isShowingResult = videoPlayer && videoPlayer.style.display === 'block';
+        // Không override nếu video kết quả đã sẵn sàng phát — heartbeat "đang xử lý"
+        // tới mỗi ~1s và sẽ liên tục ẩn video nếu không có guard này.
+        if (!isShowingResult) {
+            if (videoPlayer) videoPlayer.style.display = 'none';
+            streamPlaceholder.style.display = 'flex';
+            streamPlaceholder.innerHTML = '<div class="text-center"><h4 class="text-warning fw-bold">🚀 ĐANG XỬ LÝ LOCAL TRÊN KIT</h4><p class="text-muted small">Edge đang phân tích cục bộ toàn bộ file video.<br>Màn hình stream bị tắt để tối đa hóa tài nguyên phần cứng.<br>Vui lòng theo dõi các thông số phân tích bên dưới.</p></div>';
+        }
     } else if (data.stream) {
-        streamPlaceholder.style.display = 'none';
         const videoPlayer = document.getElementById('local-video-player');
-        if (videoPlayer) videoPlayer.style.display = 'none';
-        streamImg.style.display = 'block';
-        streamImg.src = `data:image/jpeg;base64,${data.stream}`;
+        const isShowingResult = videoPlayer && videoPlayer.style.display === 'block';
+        if (!isShowingResult) {
+            streamPlaceholder.style.display = 'none';
+            if (videoPlayer) videoPlayer.style.display = 'none';
+            streamImg.style.display = 'block';
+            streamImg.src = `data:image/jpeg;base64,${data.stream}`;
+        }
     }
 
     if (heartbeat) {
