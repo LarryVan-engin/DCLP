@@ -64,7 +64,12 @@ class ViolationPacket(BaseModel):
     lane: Optional[int] = None
     direction: Optional[str] = None
     confidence: float
-    vehicle_crop_base64: str  # Ảnh cắt phương tiện (chứa biển số) mã hóa Base64
+    vehicle_crop_base64: str                       # Ảnh crop khít (padding nhỏ, dùng để OCR)
+    vehicle_crop_wide_base64: Optional[str] = ""   # Ảnh crop rộng 75px (bằng chứng ngữ cảnh)
+    full_frame_a_base64: Optional[str] = ""        # Ảnh toàn khung SẠCH — thấy đèn + bối cảnh
+    full_frame_b_base64: Optional[str] = ""        # Ảnh toàn khung CÓ CHÚ THÍCH — bbox + loại lỗi
+    video_offset: Optional[float] = None           # Khoảng thời gian (giây) xảy ra lỗi tính từ đầu video
+    video_name: Optional[str] = None              # Tên file video local (dùng để phân biệt session, tránh gộp nhầm lỗi giữa các lần chạy)
 
 # ==========================================
 # 5. SCHEMA: GÓI HOÀN THÀNH (Edge -> Server qua MQTT: complete/{camera_id})

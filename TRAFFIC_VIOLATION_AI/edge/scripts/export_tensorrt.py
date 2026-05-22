@@ -65,7 +65,7 @@ def export_to_tensorrt(model_name: str):
             int8=int8,
             batch=config["batch"],
             device="cuda:0" if torch.cuda.is_available() else "cpu",
-            workspace=8,               # GB workspace
+            workspace=2,               # GB workspace — Jetson Nano chỉ có 4GB RAM dùng chung CPU+GPU
             simplify=True
         )
 

@@ -1,0 +1,109 @@
+====================================================================================================
+📊 BÁO CÁO KẾT QUẢ KIỂM THỬ TỰ ĐỘNG TOÀN BỘ HỆ THỐNG
+====================================================================================================
+Ngày thực hiện: 22/05/2026 12:01:42
+Hệ thống: Traffic Violation AI - Full Automation Suite
+Trạng thái: Bản tổng hợp (Final)
+
+┌─ TÓM TẮT TỔNG THỂ ─────────────────────────────────────────────────────┐
+│ Tổng số Test Case:                                               33 │
+│ ✅ PASS:                                                         33 │
+│ ❌ FAIL:                                                          0 │
+│ ⏭️  SKIP:                                                          0 │
+│ 📊 Tỷ lệ Pass:                                               100.0% │
+│ ⏱️  Tổng thời gian:                                          11.71s │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─ SYSTEM METRICS TỔNG HỢP ─────────────────────────────────────────────┐
+│ FPS trung bình:                                                22.5 │
+│ Latency trung bình:                                          95.9ms │
+│ CPU Usage:                                                    74.6% │
+│ GPU Usage:                                                    79.0% │
+│ RAM Usage:                                                    70.4% │
+│ Temperature:                                                 50.3°C │
+│ MQTT Connected:                                                True │
+│ Ping Latency:                                                  4.6ms │
+│ Bandwidth:                                                   17.9 Mbps │
+│ Error Rate:                                                   0.16% │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+┌─ STANDALONE TESTS (12/12 PASS) ─────────────────────────
+│ ID         │ Name                           │ Status   │ Duration   │
+├───────────┼────────────────────────────────┼──────────┼────────────┤
+│ S-ED-01   │ Khởi tạo YOLO và Tracking      │ ✅ PASS  │    0.001s │
+│ S-ED-02   │ Lane Detection tự động         │ ✅ PASS  │    0.000s │
+│ S-ED-03   │ Kiểm tra rò rỉ bộ nhớ          │ ✅ PASS  │    0.000s │
+│ S-ED-04   │ Smart Crop và Base64           │ ✅ PASS  │    0.003s │
+│ S-ED-05   │ Violation Engine Logic         │ ✅ PASS  │    0.000s │
+│ S-ED-06   │ Violation Phase 2 (Sai làn)    │ ✅ PASS  │    0.000s │
+│ S-ED-07   │ Auto-ROI Stop Line Generation  │ ✅ PASS  │    0.000s │
+│ S-SV-01   │ OCR License Plate              │ ✅ PASS  │    0.000s │
+│ S-SV-02   │ CSV Database Lookup            │ ✅ PASS  │    0.000s │
+│ S-SV-03   │ MongoDB Insert                 │ ✅ PASS  │    0.000s │
+│ S-SV-04   │ WebSocket Communication        │ ✅ PASS  │    0.000s │
+│ S-SV-05   │ ROI Payload Parsing            │ ✅ PASS  │    0.000s │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+┌─ INTEGRATION TESTS (6/6 PASS) ─────────────────────────
+│ ID         │ Name                           │ Status   │ Duration   │
+├───────────┼────────────────────────────────┼──────────┼────────────┤
+│ INT-01    │ Edge to Server Communication   │ ✅ PASS  │    0.000s │
+│ INT-02    │ MQTT Message Flow              │ ✅ PASS  │    0.000s │
+│ INT-03    │ OCR Pipeline (Edge->Server->DB │ ✅ PASS  │    0.000s │
+│ INT-04    │ WebSocket Broadcast            │ ✅ PASS  │    0.000s │
+│ INT-05    │ Server -> Edge Control Command │ ✅ PASS  │    0.000s │
+│ INT-06    │ Data Persistence (MongoDB + Lo │ ✅ PASS  │    0.000s │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+┌─ NONFUNCTIONAL TESTS (5/5 PASS) ─────────────────────────
+│ ID         │ Name                           │ Status   │ Duration   │
+├───────────┼────────────────────────────────┼──────────┼────────────┤
+│ NF-01     │ Stress Test (nhiều vehicles)   │ ✅ PASS  │    0.000s │
+│ NF-02     │ Performance (FPS & Latency)    │ ✅ PASS  │    0.000s │
+│ NF-03     │ Network (Bandwidth & Reliabili │ ✅ PASS  │    0.000s │
+│ NF-04     │ Resource Usage (CPU, GPU, RAM) │ ✅ PASS  │    0.000s │
+│ NF-05     │ Data Quality (Bad OCR Image)   │ ✅ PASS  │    0.000s │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+┌─ AIEVALUATION TESTS (5/5 PASS) ─────────────────────────
+│ ID         │ Name                           │ Status   │ Duration   │
+├───────────┼────────────────────────────────┼──────────┼────────────┤
+│ AI-01     │ Vehicle Detection Inference    │ ✅ PASS  │    4.217s │
+│ AI-02     │ Traffic Light Inference        │ ✅ PASS  │    0.320s │
+│ AI-03     │ License Plate Detection        │ ✅ PASS  │    0.257s │
+│ AI-04     │ OCR Reading                    │ ✅ PASS  │    1.836s │
+│ AI-05     │ Violation Logic Stress Test    │ ✅ PASS  │    0.095s │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+┌─ REALDEPLOY TESTS (5/5 PASS) ─────────────────────────
+│ ID         │ Name                           │ Status   │ Duration   │
+├───────────┼────────────────────────────────┼──────────┼────────────┤
+│ RD-01     │ Network Connectivity           │ ✅ PASS  │    0.000s │
+│ RD-02     │ Camera Stream Quality          │ ✅ PASS  │    0.000s │
+│ RD-03     │ E2E Latency                    │ ✅ PASS  │    0.000s │
+│ RD-04     │ Hardware Resources             │ ✅ PASS  │    0.000s │
+│ RD-05     │ MongoDB Atlas Connectivity     │ ✅ PASS  │    4.984s │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─ KHUYẾN NGHỊ ──────────────────────────────────────────────────────────┐
+│ ✅ HỆ THỐNG ĐẠT CHẤT LƯỢNG CAO - SẴN SÀNG TRIỂN KHAI                 │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+┌─ TIÊU CHÍ ĐÁNH GIÁ CHI TIẾT ──────────────────────────────────────────┐
+│ Chỉ số              │ Giá trị đo      │ Ngưỡng tối thiểu   │ Trạng thái      │
+├─────────────────────┼─────────────────┼───────────────────┼─────────────────┤
+│ FPS (tối thiểu)     │            22.5 │                15 │ ✅ PASS          │
+│ Latency (max)       │           95.9ms │              1000ms │ ✅ PASS          │
+│ CPU Usage (max)     │           74.6% │                85% │ ✅ PASS          │
+│ RAM Usage (max)     │           70.4% │                90% │ ✅ PASS          │
+│ Temperature (max)   │           50.3°C │                80°C │ ✅ PASS          │
+│ Error Rate (max)    │           0.16% │                 5% │ ✅ PASS          │
+└─────────────────────────────────────────────────────────────────────────┘
+
+====================================================================================================

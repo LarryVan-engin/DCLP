@@ -1,0 +1,129 @@
+====================================================================================================
+📊 BÁO CÁO KẾT QUẢ KIỂM THỬ TỰ ĐỘNG TOÀN BỘ HỆ THỐNG
+====================================================================================================
+Ngày thực hiện: 22/05/2026 11:46:07
+Hệ thống: Traffic Violation AI - Full Automation Suite
+Trạng thái: Bản tổng hợp (Final)
+
+┌─ TÓM TẮT TỔNG THỂ ─────────────────────────────────────────────────────┐
+│ Tổng số Test Case:                                               33 │
+│ ✅ PASS:                                                         28 │
+│ ❌ FAIL:                                                          4 │
+│ ⏭️  SKIP:                                                          1 │
+│ 📊 Tỷ lệ Pass:                                                84.8% │
+│ ⏱️  Tổng thời gian:                                           1.29s │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─ SYSTEM METRICS TỔNG HỢP ─────────────────────────────────────────────┐
+│ FPS trung bình:                                                23.2 │
+│ Latency trung bình:                                          66.4ms │
+│ CPU Usage:                                                    65.2% │
+│ GPU Usage:                                                    68.3% │
+│ RAM Usage:                                                    61.9% │
+│ Temperature:                                                 56.6°C │
+│ MQTT Connected:                                                True │
+│ Ping Latency:                                                  5.9ms │
+│ Bandwidth:                                                   12.2 Mbps │
+│ Error Rate:                                                   0.74% │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+┌─ STANDALONE TESTS (12/12 PASS) ─────────────────────────
+│ ID         │ Name                           │ Status   │ Duration   │
+├───────────┼────────────────────────────────┼──────────┼────────────┤
+│ S-ED-01   │ Khởi tạo YOLO và Tracking      │ ✅ PASS  │    0.000s │
+│ S-ED-02   │ Lane Detection tự động         │ ✅ PASS  │    0.000s │
+│ S-ED-03   │ Kiểm tra rò rỉ bộ nhớ          │ ✅ PASS  │    0.000s │
+│ S-ED-04   │ Smart Crop và Base64           │ ✅ PASS  │    0.012s │
+│ S-ED-05   │ Violation Engine Logic         │ ✅ PASS  │    0.000s │
+│ S-ED-06   │ Violation Phase 2 (Sai làn)    │ ✅ PASS  │    0.000s │
+│ S-ED-07   │ Auto-ROI Stop Line Generation  │ ✅ PASS  │    0.000s │
+│ S-SV-01   │ OCR License Plate              │ ✅ PASS  │    0.000s │
+│ S-SV-02   │ CSV Database Lookup            │ ✅ PASS  │    0.000s │
+│ S-SV-03   │ MongoDB Insert                 │ ✅ PASS  │    0.000s │
+│ S-SV-04   │ WebSocket Communication        │ ✅ PASS  │    0.000s │
+│ S-SV-05   │ ROI Payload Parsing            │ ✅ PASS  │    0.000s │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+┌─ INTEGRATION TESTS (6/6 PASS) ─────────────────────────
+│ ID         │ Name                           │ Status   │ Duration   │
+├───────────┼────────────────────────────────┼──────────┼────────────┤
+│ INT-01    │ Edge to Server Communication   │ ✅ PASS  │    0.000s │
+│ INT-02    │ MQTT Message Flow              │ ✅ PASS  │    0.000s │
+│ INT-03    │ OCR Pipeline (Edge->Server->DB │ ✅ PASS  │    0.000s │
+│ INT-04    │ WebSocket Broadcast            │ ✅ PASS  │    0.000s │
+│ INT-05    │ Server -> Edge Control Command │ ✅ PASS  │    0.000s │
+│ INT-06    │ Data Persistence (MongoDB + Lo │ ✅ PASS  │    0.000s │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+┌─ NONFUNCTIONAL TESTS (5/5 PASS) ─────────────────────────
+│ ID         │ Name                           │ Status   │ Duration   │
+├───────────┼────────────────────────────────┼──────────┼────────────┤
+│ NF-01     │ Stress Test (nhiều vehicles)   │ ✅ PASS  │    0.001s │
+│ NF-02     │ Performance (FPS & Latency)    │ ✅ PASS  │    0.000s │
+│ NF-03     │ Network (Bandwidth & Reliabili │ ✅ PASS  │    0.000s │
+│ NF-04     │ Resource Usage (CPU, GPU, RAM) │ ✅ PASS  │    0.000s │
+│ NF-05     │ Data Quality (Bad OCR Image)   │ ✅ PASS  │    0.000s │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+┌─ AIEVALUATION TESTS (1/5 PASS) ─────────────────────────
+│ ID         │ Name                           │ Status   │ Duration   │
+├───────────┼────────────────────────────────┼──────────┼────────────┤
+│ AI-01     │ Vehicle Detection Inference    │ ❌ FAIL  │    0.001s │
+│ AI-02     │ Traffic Light Inference        │ ❌ FAIL  │    0.000s │
+│ AI-03     │ License Plate Detection        │ ❌ FAIL  │    0.000s │
+│ AI-04     │ OCR Reading                    │ ⏭️ SKIP  │    0.013s │
+│ AI-05     │ Violation Logic Stress Test    │ ✅ PASS  │    1.262s │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+┌─ REALDEPLOY TESTS (4/5 PASS) ─────────────────────────
+│ ID         │ Name                           │ Status   │ Duration   │
+├───────────┼────────────────────────────────┼──────────┼────────────┤
+│ RD-01     │ Network Connectivity           │ ✅ PASS  │    0.000s │
+│ RD-02     │ Camera Stream Quality          │ ✅ PASS  │    0.000s │
+│ RD-03     │ E2E Latency                    │ ✅ PASS  │    0.000s │
+│ RD-04     │ Hardware Resources             │ ✅ PASS  │    0.000s │
+│ RD-05     │ MongoDB Atlas Connectivity     │ ❌ FAIL  │    0.001s │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─ PHÂN TÍCH LỖI ─────────────────────────────────────────────────────┐
+
+❌ TEST CASE: AI-01 - Vehicle Detection Inference
+   Thời gian thực hiện: 0.001s
+   Lỗi: No module named 'ultralytics'
+
+❌ TEST CASE: AI-02 - Traffic Light Inference
+   Thời gian thực hiện: 0.000s
+   Lỗi: No module named 'ultralytics'
+
+❌ TEST CASE: AI-03 - License Plate Detection
+   Thời gian thực hiện: 0.000s
+   Lỗi: No module named 'ultralytics'
+
+❌ TEST CASE: RD-05 - MongoDB Atlas Connectivity
+   Thời gian thực hiện: 0.001s
+   Lỗi: Lỗi kết nối DB: No module named 'motor'
+
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─ KHUYẾN NGHỊ ──────────────────────────────────────────────────────────┐
+│ ⚠️  Cần fix thêm các lỗi trước khi triển khai thực tế                 │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+┌─ TIÊU CHÍ ĐÁNH GIÁ CHI TIẾT ──────────────────────────────────────────┐
+│ Chỉ số              │ Giá trị đo      │ Ngưỡng tối thiểu   │ Trạng thái      │
+├─────────────────────┼─────────────────┼───────────────────┼─────────────────┤
+│ FPS (tối thiểu)     │            23.2 │                15 │ ✅ PASS          │
+│ Latency (max)       │           66.4ms │              1000ms │ ✅ PASS          │
+│ CPU Usage (max)     │           65.2% │                85% │ ✅ PASS          │
+│ RAM Usage (max)     │           61.9% │                90% │ ✅ PASS          │
+│ Temperature (max)   │           56.6°C │                80°C │ ✅ PASS          │
+│ Error Rate (max)    │           0.74% │                 5% │ ✅ PASS          │
+└─────────────────────────────────────────────────────────────────────────┘
+
+====================================================================================================

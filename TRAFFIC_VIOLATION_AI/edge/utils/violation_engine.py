@@ -32,55 +32,64 @@ class ViolationEngine:
         self.pending_red_lights = {}
         self.wrong_way_candidates = defaultdict(int)
 
-    def check_violations(self, 
-                         track_id: int, 
-                         bbox: List[int], 
-                         trajectory: List[Tuple[int, int]], 
-                         light_status: Dict[str, str], 
+    def check_violations(self,
+                         track_id: int,
+                         bbox: List[int],
+                         trajectory: List[Tuple[int, int]],
+                         light_status: Dict[str, str],
                          zones_config: dict,
-                         stop_line_y: int = None) -> List[str]:
+                         stop_line_y: int = None,
+                         vehicle_cls: int = None,
+                         was_right_lane: bool = False,
+                         in_roi: bool = True) -> List[str]:
         """
         Quét toàn bộ luật vi phạm.
-        stop_line_y: Tọa độ Y pixel của vạch dừng (đỉnh ROI).
+        stop_line_y   : Tọa độ Y pixel của vạch dừng (đỉnh ROI).
+        vehicle_cls   : Class ID YOLO của xe (3=motorcycle, 2/5/7=car/bus/truck).
+        was_right_lane: True nếu xe máy đã từng ở trong làn rẽ phải trước khi vượt vạch.
+                        Chỉ xe máy có cờ này mới được xóa lỗi khi xác nhận rẽ phải.
         """
         detected_new_violations = []
         x1, y1, x2, y2 = bbox
         bottom_center = get_bottom_center(bbox)
-        
+
+        # Xe máy từ đúng làn rẽ phải mới được miễn lỗi đèn đỏ khi rẽ phải
+        is_moto = (vehicle_cls in cfg.MOTO_CLASSES) if vehicle_cls is not None else False
+        can_exempt_right_turn = is_moto and was_right_lane
+
         # =================================================================
         # LUẬT 1: VƯỢT ĐÈN ĐỎ / VÀNG
         # =================================================================
         current_light = light_status.get("straight", "unknown").lower()
-        
+
         if track_id in self.pending_red_lights:
             suspect_data = self.pending_red_lights[track_id]
             suspect_data["frames_waited"] += 1
-            
+            suspect_data["bbox"] = bbox  # Cập nhật bbox mới nhất để crop đúng vị trí khi mất tracking
+
             start_p = suspect_data["cross_point"]
             dx = bottom_center[0] - start_p[0]
             dy = bottom_center[1] - start_p[1]
-            
-            # Logic rẽ phải: Trục X thay đổi nhiều hơn trục Y
-            is_turning_right = dx > 15 and dx > abs(dy) * 0.35
-            
-            if is_turning_right:
-                # Nếu rẽ phải -> Xóa án chờ (không phạt)
+
+            # Giống full_main.py: dx > 15 AND dx > abs(dy)*1.5 (chặt hơn 0.35 cũ)
+            is_turning_right = dx > cfg.RIGHT_TURN_DX_THRESHOLD and dx > abs(dy) * cfg.RIGHT_TURN_RATIO_THRESHOLD
+
+            if is_turning_right and can_exempt_right_turn:
+                # Xe máy từ làn phải, xác nhận rẽ phải → xóa án chờ, không phạt
                 del self.pending_red_lights[track_id]
             elif suspect_data["frames_waited"] >= cfg.RED_LIGHT_WAIT_FRAMES:
-                # Hết số frame chờ mà không rẽ phải -> CHỐT LỖI
+                # Hết thời gian chờ mà không rẽ phải → chốt lỗi
                 if "VƯỢT ĐÈN ĐỎ" not in self.recorded_violations[track_id]:
                     detected_new_violations.append("VƯỢT ĐÈN ĐỎ")
                     self.recorded_violations[track_id].add("VƯỢT ĐÈN ĐỎ")
                 del self.pending_red_lights[track_id]
         else:
-            # ƯU TIÊN: So sánh Y trực tiếp (giống demo code) - chính xác, nhanh
-            # Điều kiện: TÂM Bounding Box (center_y) đã vượt lên phía trên stop_line_y
+            # So sánh Y trực tiếp — Điểm kiểm tra: tâm bbox (center_y)
             crossed = False
             if stop_line_y is not None:
                 center_y = (y1 + y2) // 2
                 crossed = (center_y < stop_line_y)
             else:
-                # Fallback: dùng line intersection nếu không có stop_line_y
                 for line_zone in zones_config.get("lines", []):
                     if line_zone.label == "stop_line":
                         if check_vehicle_crossed_line(trajectory, line_zone):
@@ -89,12 +98,18 @@ class ViolationEngine:
 
             if crossed:
                 if current_light == "red":
-                    if track_id not in self.pending_red_lights:
-                        self.pending_red_lights[track_id] = {
-                            "cross_point": bottom_center,
-                            "frames_waited": 0,
-                            "bbox": bbox
-                        }
+                    if can_exempt_right_turn:
+                        if track_id not in self.pending_red_lights:
+                            self.pending_red_lights[track_id] = {
+                                "cross_point": bottom_center,
+                                "frames_waited": 0,
+                                "bbox": bbox,
+                                "can_exempt": can_exempt_right_turn  # lưu lại để cleanup_lost_tracks dùng
+                            }
+                    else:
+                        if "VƯỢT ĐÈN ĐỎ" not in self.recorded_violations[track_id]:
+                            detected_new_violations.append("VƯỢT ĐÈN ĐỎ")
+                            self.recorded_violations[track_id].add("VƯỢT ĐÈN ĐỎ")
                 elif current_light == "yellow":
                     if "VƯỢT ĐÈN VÀNG" not in self.recorded_violations[track_id]:
                         detected_new_violations.append("VƯỢT ĐÈN VÀNG")
@@ -111,7 +126,7 @@ class ViolationEngine:
         # =================================================================
         # LUẬT 3: SAI LÀN (Do User tự vẽ thủ công)
         # =================================================================
-        if "SAI LÀN" not in self.recorded_violations[track_id]:
+        if in_roi and "SAI LÀN" not in self.recorded_violations[track_id]:
             for poly_zone in zones_config.get("polygons", []):
                 if poly_zone.label == "wrong_lane":
                     pts = np.array([[p.x, p.y] for p in poly_zone.points], np.int32).reshape((-1, 1, 2))

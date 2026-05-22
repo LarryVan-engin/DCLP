@@ -1,0 +1,33 @@
+# ============================================================
+# Requirements cho Edge Node (Jetson Nano - Python 3.8)
+# Cài đặt: pip3 install -r requirements_edge.txt
+#
+# Lưu ý:
+#   - torch/torchvision: cài từ NVIDIA JetPack wheel riêng,
+#     KHÔNG cài qua pip (version đã tích hợp sẵn trong JetPack)
+#   - opencv-python: dùng bản NVDEC/NVENC từ JetPack,
+#     KHÔNG ghi đè bằng pip
+# ============================================================
+
+# MQTT Client
+paho-mqtt>=1.6.1
+
+# AI Framework
+ultralytics>=8.4.0          # YOLO + ByteTrack
+
+# ByteTrack dependency — LAP (Linear Assignment Problem solver)
+# Phải cài trước khi chạy lần đầu để tránh delay auto-download
+lap>=0.5.12
+
+# Data validation
+pydantic>=2.0.0
+
+# Numerical / Image
+numpy>=1.21.6,<2.0          # <2.0 để tương thích torch 1.11 trên JetPack 4.6
+
+# HTTP (upload video lên Server)
+requests>=2.28.0
+
+# Excel export (nếu cần chạy export trực tiếp trên Edge)
+# pandas>=1.5.0
+# openpyxl>=3.1.0

@@ -2,13 +2,16 @@
 ********************************************************************************************************************
 Project:      Traffic Violation Detection (Pro Version - MQTT Hybrid)
 File:         docs/test_automation_real.py
-Description:  Automation Test Suite cho Real Deployment - Chạy với dữ liệu thật từ Jetson.
-              Cần kết nối SSH hoặc MQTT tới Jetson để lấy metrics thực tế.
+Description:  Automation Test Suite cho Real Deployment - Chạy SAU KHI xử lý video xong.
+              Mục đích: Đọc kết quả từ inference_timing.json và các file log trên Jetson.
+              
+              !!! QUAN TRỌNG: Chạy thủ công sau khi main_edge.py đã xử lý xong video,
+              KHÔNG chạy song song với tiến trình AI để tránh làm chậm Jetson Nano.
               
               Cách sử dụng:
-              1. Kết nối SSH: python test_automation_real.py --ssh jetson_ip --user user --password pass
-              2. Kết nối MQTT: python test_automation_real.py --mqtt broker_ip
-              3. Chạy local trên Jetson: python test_automation_real.py --local
+              1. Chạy main_edge.py xử lý xong video -> đợi in ra Timing Report
+              2. SAU ĐÓ mới chạy: python3 docs/test_automation_real.py --local
+
 Author:       Larry Phong Truc
 Date:         01/05/2026
 ********************************************************************************************************************
@@ -31,8 +34,20 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 import asyncio
 
-# Add project root to path - dùng .resolve() để luôn là đường dẫn tuyệt đối
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# Tự động nhận diện vị trí script:
+# - Nếu chạy từ docs/  → PROJECT_ROOT = thư mục gốc project
+# - Nếu chạy từ edge/  → PROJECT_ROOT = thư mục cha của edge (tức là gốc project)
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if _SCRIPT_DIR.name == "edge":
+    # Script đã được copy vào edge/ (triển khai Jetson không có docs/)
+    PROJECT_ROOT = _SCRIPT_DIR.parent if (_SCRIPT_DIR.parent / "shared").exists() else _SCRIPT_DIR
+    # Nếu không có thư mục cha với shared/, coi edge/ là root
+    if not (PROJECT_ROOT / "edge").exists():
+        PROJECT_ROOT = _SCRIPT_DIR
+else:
+    # Chạy từ docs/ - cấu trúc project đầy đủ
+    PROJECT_ROOT = _SCRIPT_DIR.parent
+
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "edge"))  # để import utils trực tiếp
 
@@ -376,7 +391,7 @@ class RealDeploymentTests:
             metrics = self._get_metrics()
 
             # Test ping - dùng cú pháp Linux (-c/-W) vì chạy trên Jetson/Docker
-            target = self.ssh_conn.host if (self.connection_type == "ssh" and self.ssh_conn) else "8.8.8.8"
+            target = self.ssh_conn.host if (self.connection_type == "ssh" and self.ssh_conn) else "0.0.0.0"
             try:
                 result = subprocess.run(
                     ["ping", "-c", "1", "-W", "2", target],
@@ -798,7 +813,9 @@ class TestAIEvaluation:
             ))
 
     def test_AI_06_inference_timing_log(self):
-        """AI-06: Đọc Inference Timing từ inference_timing.json do main_edge.py lưu"""
+        """AI-06: Đọc Inference Timing chi tiết từ inference_timing.json do main_edge.py lưu.
+        File JSON có cấu trúc mới gồm các key: inference, jpeg_violation, stream_encode, video_write.
+        """
         test_id = "AI-06"
         test_name = "Inference Timing (Real Video)"
         start_time = time.time()
@@ -807,57 +824,56 @@ class TestAIEvaluation:
 
         try:
             if not timing_file.exists():
-                # Fallback: đo bằng YOLO 1 lần nếu chưa chạy main_edge.py
-                from ultralytics import YOLO
-                model_path = PROJECT_ROOT / "edge" / "models" / "yolo12n.pt"
-                if not model_path.exists():
-                    raise FileNotFoundError(f"Chưa có inference_timing.json và model cũng không tìm thấy.")
-                model = YOLO(str(model_path))
-                dummy = np.zeros((720, 1280, 3), dtype=np.uint8)
-                times_ms = []
-                for _ in range(5):
-                    t = time.time()
-                    model(dummy, verbose=False)
-                    times_ms.append((time.time() - t) * 1000)
-                data = {
-                    "avg_ms": round(sum(times_ms) / len(times_ms), 2),
-                    "avg_fps": round(1000.0 / (sum(times_ms) / len(times_ms)), 2),
-                    "min_ms": round(min(times_ms), 2),
-                    "max_ms": round(max(times_ms), 2),
-                    "total_frames": len(times_ms),
-                    "total_s": round(sum(times_ms) / 1000, 2),
-                    "source": "fallback_dummy"
-                }
-                note = "⚠️ Dùng dummy inference (chưa có inference_timing.json)"
+                raise FileNotFoundError(
+                    "Chưa có file inference_timing.json. "
+                    "Hãy chạy main_edge.py xử lý xong video trước, "
+                    "sau đó mới chạy test này."
+                )
+
+            with open(timing_file, encoding="utf-8") as f:
+                data = json.load(f)
+
+            # Hỗ trợ cả format cũ (flat) lẫn format mới (nested)
+            if "inference" in data:
+                # Format mới
+                inf  = data["inference"]
+                jpg  = data.get("jpeg_violation", {})
+                strm = data.get("stream_encode", {})
+                wrt  = data.get("video_write", {})
+                avg_ms  = inf["avg_ms"]
+                min_ms  = inf["min_ms"]
+                max_ms  = inf["max_ms"]
+                avg_fps = data.get("avg_fps", round(1000/avg_ms,2) if avg_ms else 0)
+                frames  = data.get("total_frames", 0)
+                total_s = data.get("total_s", 0)
+                decode  = data.get("decode_mode", "unknown")
+                msg = (
+                    f"Decoder={decode.upper()} | "
+                    f"Inference: Avg={avg_ms:.1f}ms (~{avg_fps:.1f}FPS) Min={min_ms:.1f} Max={max_ms:.1f} | "
+                    f"Vi phạm encode: {jpg.get('avg_ms',0):.1f}ms ({jpg.get('count',0)} lần) | "
+                    f"Stream encode: {strm.get('avg_ms',0):.1f}ms | "
+                    f"Video write: {wrt.get('avg_ms',0):.1f}ms | "
+                    f"Frames={frames} | Tổng={total_s:.1f}s"
+                )
             else:
-                with open(timing_file, encoding="utf-8") as f:
-                    data = json.load(f)
-                note = f"📁 Đọc từ inference_timing.json ({data.get('timestamp','')})"
+                # Format cũ (backward-compat)
+                avg_ms  = data["avg_ms"]
+                avg_fps = data["avg_fps"]
+                min_ms  = data.get("min_ms", 0)
+                max_ms  = data.get("max_ms", 0)
+                frames  = data.get("total_frames", 0)
+                total_s = data.get("total_s", 0)
+                msg = f"Avg={avg_ms:.1f}ms (~{avg_fps:.1f}FPS) | Min={min_ms:.1f}ms | Max={max_ms:.1f}ms | Frames={frames}"
 
-            avg_ms  = data["avg_ms"]
-            avg_fps = data["avg_fps"]
-            min_ms  = data.get("min_ms", 0)
-            max_ms  = data.get("max_ms", 0)
-            frames  = data.get("total_frames", 0)
-            total_s = data.get("total_s", 0)
-
-            # PASS nếu avg < 200ms (Jetson yêu cầu tối thiểu ~5 FPS)
-            passed = avg_ms < 200
-
+            passed = avg_ms < 200  # PASS nếu avg inference < 200ms (~5 FPS)
             duration = time.time() - start_time
             self.reporter.add_result(TestResult(
                 test_id, test_name, "AIEvaluation",
-                "PASS" if passed else "FAIL", duration,
-                f"Avg={avg_ms:.1f}ms (~{avg_fps:.1f}FPS) | Min={min_ms:.1f}ms | Max={max_ms:.1f}ms | Frames={frames} | {note}",
+                "PASS" if passed else "FAIL", duration, msg,
                 details=data,
-                metrics={
-                    "avg_inference_ms": avg_ms,
-                    "avg_fps": avg_fps,
-                    "min_ms": min_ms,
-                    "max_ms": max_ms,
-                    "total_frames": frames,
-                    "total_s": total_s,
-                }
+                metrics={"avg_inference_ms": avg_ms, "avg_fps": avg_fps,
+                         "min_ms": min_ms, "max_ms": max_ms,
+                         "total_frames": frames, "total_s": total_s}
             ))
         except Exception as e:
             duration = time.time() - start_time

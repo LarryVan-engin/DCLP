@@ -148,8 +148,13 @@ class LaneDetector:
             boundaries.append(m_left)
         boundaries.append(1.0)
 
-        # ── BƯỚC 4: Chỉ đánh dấu làn ô tô 1 là vùng cấm xe máy ───────────────
+        # ── BƯỚC 4: Đánh dấu các vùng ô tô (Vùng cấm xe máy) ───────────────
         self.car_only_zones.append((0.0, w_car_1_max))
+        
+        # Nếu vùng giữa đủ rộng và không có xe máy (tức là xe máy chỉ ở bên phải m_left),
+        # thì vùng giữa cũng được coi là Làn ô tô 2 (Car Only)
+        if m_left - w_car_1_max > 0.1:
+            self.car_only_zones.append((w_car_1_max, m_left))
 
         print(f"[LANE DETECTION] Đã học xong!")
         print(f"[LANE DETECTION] Mép phải MAX làn ô tô 1 : {w_car_1_max:.3f}")

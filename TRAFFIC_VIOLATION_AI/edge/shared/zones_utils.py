@@ -25,6 +25,19 @@ def zone_to_numpy(zone: ZoneDefinition) -> np.ndarray:
 # =====================================================================
 # 2. XỬ LÝ BOUNDING BOX CỦA YOLO
 # =====================================================================
+def get_normalized_x(x: int, y: int, roi_pts: list) -> float:
+    """
+    Chuẩn hóa tọa độ X theo chiều rộng thực của ROI tại độ cao y (perspective correction).
+    Trả về giá trị [0.0, 1.0]: 0 = cạnh trái ROI, 1 = cạnh phải ROI.
+    Giống hàm get_normalized_x() trong full_main.py.
+    """
+    top_y = roi_pts[0][1]
+    bot_y = roi_pts[2][1]
+    y = max(top_y + 1, min(bot_y - 1, y))
+    ratio   = (y - top_y) / (bot_y - top_y)
+    left_x  = roi_pts[0][0] + ratio * (roi_pts[3][0] - roi_pts[0][0])
+    right_x = roi_pts[1][0] + ratio * (roi_pts[2][0] - roi_pts[1][0])
+    return float(np.clip((x - left_x) / (right_x - left_x + 1e-6), 0.0, 1.0))
 def get_bottom_center(bbox: List[float]) -> Tuple[int, int]:
     """
     Lấy tọa độ điểm giữa cạnh dưới của Bounding Box.

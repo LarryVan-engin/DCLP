@@ -9,9 +9,11 @@
 let socket;
 let stage, layer;
 let violationHistory = {}; // Chuyển thành Object để dễ truy xuất theo trackId
+let localVideoViolations = []; // Mảng chứa toàn bộ vi phạm của video xử lý local
 let pendingVideoStart = null;
 let lastStartPayload = null;
 let isStopped = false;
+let roiSaved = false; // Flag: true sau khi user đã Lưu ROI → ngăn auto_roi_proposal hiện lại canvas
 const streamImg = document.getElementById('mjpeg-stream');
 const streamPlaceholder = document.getElementById('stream-placeholder');
 const connectionBadge = document.getElementById('connection-status');
@@ -21,6 +23,14 @@ const systemLog = document.getElementById('system-log');
 document.addEventListener('DOMContentLoaded', () => {
     connectWebSocket();
     initKonva(); // Khởi tạo Canvas để sẵn sàng hứng dữ liệu vẽ
+
+    // Tự động clear dashboard state khi chuyển tab/mode
+    const modeTabs = document.querySelectorAll('#modeTab button');
+    modeTabs.forEach(tab => {
+        tab.addEventListener('shown.bs.tab', (e) => {
+            clearDashboardState();
+        });
+    });
 });
 
 // ==========================================
@@ -47,37 +57,67 @@ function connectWebSocket() {
             const data = message.data;
             const tid = data.track_id;
 
-            if (violationHistory[tid]) {
-                // Cùng ID: merge violation_type (tránh trùng lặp)
-                const existing = violationHistory[tid].violation_type || "";
-                const incoming = data.violation_type || "";
-                const mergedSet = new Set(
-                    [...existing.split("+"), ...incoming.split("+")]
-                        .map(s => s.trim()).filter(Boolean)
-                );
-                data.violation_type = Array.from(mergedSet).join(" + ");
+            if (data.mode === "video_local") {
+                // Cập nhật/gộp lỗi cho các gói tin vi phạm local nhận từ MQTT
+                const existingIndex = localVideoViolations.findIndex(v => v.track_id === tid);
+                if (existingIndex !== -1) {
+                    const existing = localVideoViolations[existingIndex].violation_type || "";
+                    const incoming = data.violation_type || "";
+                    const mergedSet = new Set(
+                        [...existing.split("+"), ...incoming.split("+")]
+                            .map(s => s.trim()).filter(Boolean)
+                    );
+                    data.violation_type = Array.from(mergedSet).join(" + ");
+                    
+                    // Giữ lại trạng thái shownOnPlayer cũ nếu có
+                    data.shownOnPlayer = localVideoViolations[existingIndex].shownOnPlayer || false;
+                    localVideoViolations[existingIndex] = data;
+                } else {
+                    data.shownOnPlayer = false;
+                    localVideoViolations.push(data);
+                }
+            } else {
+                if (violationHistory[tid]) {
+                    // Cùng ID: merge violation_type (tránh trùng lặp)
+                    const existing = violationHistory[tid].violation_type || "";
+                    const incoming = data.violation_type || "";
+                    const mergedSet = new Set(
+                        [...existing.split("+"), ...incoming.split("+")]
+                            .map(s => s.trim()).filter(Boolean)
+                    );
+                    data.violation_type = Array.from(mergedSet).join(" + ");
+                }
+                violationHistory[tid] = data;
+                handleNewViolation(data);
             }
-            violationHistory[tid] = data;
-            handleNewViolation(data);
         } else if (message.type === "file_list") {
             updateVideoSelect(message.files);
         } else if (message.type === "camera_list") {
             updateCameraSelect(message.cameras);
         } else if (message.type === "auto_roi_proposal") {
             // Nhận tọa độ đề xuất từ AI và vẽ lên màn hình để chỉnh sửa
-            loadAutoROI(message.points);
+            // right_turn_zone_bottom_y: tỉ lệ [0-1] từ server (mặc định 0.7 nếu chưa có)
             const currentMode = pendingVideoStart ? pendingVideoStart.mode : "video";
             pendingVideoStart = {
                 action: "start",
                 mode: currentMode,
                 video_name: message.video_name || document.getElementById('video-file-select').value
             };
-            logSystem("🤖 AI đã đề xuất vùng giám sát (Auto-ROI). Hãy kéo thả để tinh chỉnh.");
+            // Chỉ vẽ lên canvas nếu user chưa Lưu ROI (tránh chồng lấn 2 lớp)
+            if (!roiSaved) {
+                loadAutoROI(message.points, message.right_turn_zone_bottom_y ?? 0.15);
+                logSystem("🤖 AI đã đề xuất vùng giám sát (Auto-ROI). Hãy kéo thả để tinh chỉnh.");
+            }
         } else if (message.type === "video_ready") {
             logSystem(`✅ Video local đã xử lý xong. Thời gian Inference: ${message.processing_time}s`);
             streamImg.style.display = 'none';
             streamPlaceholder.style.display = 'none';
-            
+
+            // Ẩn ROI canvas (Konva stage position:absolute phủ toàn container)
+            // để video kết quả không bị che khuất phía dưới.
+            const roiCanvasEl = document.getElementById('roi-canvas');
+            if (roiCanvasEl) roiCanvasEl.style.display = 'none';
+
             let videoPlayer = document.getElementById('local-video-player');
             if (!videoPlayer) {
                 videoPlayer = document.createElement('video');
@@ -90,8 +130,112 @@ function connectWebSocket() {
                 document.getElementById('stream-container').appendChild(videoPlayer);
             }
             videoPlayer.style.display = 'block';
+            videoPlayer.muted = true; // MUST be set before src for autoplay to work
             videoPlayer.src = message.video_url;
-        }
+            videoPlayer.load(); // Force reload so browser sees muted=true before playing
+
+            // Remove any leftover play overlay from previous run
+            const existingOverlay = document.getElementById('play-btn-overlay');
+            if (existingOverlay) existingOverlay.remove();
+
+            videoPlayer.play().then(() => {
+                logSystem("▶️ Bắt đầu tự động phát video kết quả.");
+            }).catch(err => {
+                logSystem("⚠️ Trình duyệt chặn tự động phát. Nhấn nút ▶ để xem.");
+                console.warn("Autoplay blocked:", err);
+
+                const overlay = document.createElement('div');
+                overlay.id = 'play-btn-overlay';
+                overlay.style.cssText = [
+                    'position:absolute', 'inset:0',
+                    'display:flex', 'align-items:center', 'justify-content:center',
+                    'background:rgba(0,0,0,0.45)', 'cursor:pointer', 'z-index:10'
+                ].join(';');
+                overlay.innerHTML = `
+                    <div style="width:72px;height:72px;border-radius:50%;
+                                background:rgba(255,255,255,0.92);
+                                display:flex;align-items:center;justify-content:center;
+                                box-shadow:0 4px 24px rgba(0,0,0,0.55);
+                                transition:transform .12s">
+                        <svg width="30" height="30" viewBox="0 0 24 24" fill="#111">
+                            <path d="M8 5v14l11-7z"/>
+                        </svg>
+                    </div>`;
+                overlay.onmouseenter = () => overlay.firstElementChild.style.transform = 'scale(1.1)';
+                overlay.onmouseleave = () => overlay.firstElementChild.style.transform = '';
+                overlay.onclick = () => {
+                    videoPlayer.play().then(() => {
+                        overlay.remove();
+                        logSystem("▶️ Đang phát video kết quả.");
+                    });
+                };
+                document.getElementById('stream-container').appendChild(overlay);
+            });
+
+            // Đính kèm sự kiện timeupdate để đồng bộ hiển thị vi phạm theo tiến trình video
+            videoPlayer.ontimeupdate = () => {
+                const currentTime = videoPlayer.currentTime;
+
+                // 1. Quét xuôi: Hiển thị các vi phạm có video_offset <= currentTime mà chưa hiển thị
+                localVideoViolations.forEach(v => {
+                    if (v.video_offset !== null && v.video_offset <= currentTime) {
+                        if (!v.shownOnPlayer) {
+                            v.shownOnPlayer = true;
+                            violationHistory[v.track_id] = v;
+                            handleNewViolation(v);
+                        }
+                    }
+                });
+
+                // 2. Quét ngược (Tua ngược): Xoá các vi phạm có video_offset > currentTime khỏi DOM & history
+                localVideoViolations.forEach(v => {
+                    if (v.video_offset !== null && v.video_offset > currentTime) {
+                        if (v.shownOnPlayer) {
+                            v.shownOnPlayer = false;
+                            delete violationHistory[v.track_id];
+                            
+                            // Xoá card khỏi DOM
+                            const card = document.getElementById(`vcard-${v.track_id}`);
+                            if (card) {
+                                card.remove();
+                            }
+                        }
+                    }
+                });
+
+                // Nếu không còn vi phạm nào được hiển thị, hiển thị lại dòng "Đang chờ dữ liệu..."
+                const list = document.getElementById('violation-list');
+                const activeCards = list.querySelectorAll('.violation-card');
+                if (activeCards.length === 0 && !list.innerHTML.includes("Đang chờ dữ liệu")) {
+                    list.innerHTML = '<div class="text-center text-muted mt-5 small">Đang chờ dữ liệu...</div>';
+                }
+
+                // 3. Tính toán lại thống kê (Ô tô, Xe máy) dựa trên các vi phạm đang hiển thị
+                let carCount = 0;
+                let motoCount = 0;
+                const countedTracks = new Set();
+
+                localVideoViolations.forEach(v => {
+                    if (v.shownOnPlayer && !countedTracks.has(v.track_id)) {
+                        countedTracks.add(v.track_id);
+                        
+                        // Xác định class xe để đếm
+                        const vehicleClass = (v.class_vehicle || "").toLowerCase();
+                        const isMoto = vehicleClass.includes("xe máy") || vehicleClass.includes("xe may") || 
+                                       vehicleClass.includes("motorcycle") || vehicleClass.includes("moto");
+                        
+                        if (isMoto) {
+                            motoCount++;
+                        } else {
+                            carCount++;
+                        }
+                    }
+                });
+
+                document.getElementById('stat-car').innerText = carCount;
+                document.getElementById('stat-motorcycle').innerText = motoCount;
+            };
+        };
     };
 
     socket.onclose = () => {
@@ -162,8 +306,13 @@ function handleRealtimeStream(data) {
     }
 
     if (heartbeat) {
-        document.getElementById('stat-car').innerText = heartbeat.stats.car || 0;
-        document.getElementById('stat-motorcycle').innerText = heartbeat.stats.motorcycle || 0;
+        // Chỉ cập nhật thống kê (car, motorcycle) từ heartbeat khi local-video-player KHÔNG hiển thị và hoạt động
+        const videoPlayer = document.getElementById('local-video-player');
+        const isPlayingVideo = videoPlayer && videoPlayer.style.display === 'block';
+        if (!isPlayingVideo) {
+            document.getElementById('stat-car').innerText = heartbeat.stats.car || 0;
+            document.getElementById('stat-motorcycle').innerText = heartbeat.stats.motorcycle || 0;
+        }
         document.getElementById('fps-counter').innerText = `FPS: ${heartbeat.fps}`;
 
         const lightBadge = document.getElementById('stat-light');
@@ -267,8 +416,7 @@ function initKonva() {
     // Tự động scale Canvas khi resize màn hình
     const resizeObserver = new ResizeObserver(() => {
         if(streamImg.clientWidth > 0) {
-            stage.width(streamImg.clientWidth);
-            stage.height(streamImg.clientHeight);
+            syncStageToStream();
         }
     });
     resizeObserver.observe(streamImg);
@@ -312,44 +460,167 @@ function syncStageToStream() {
 streamImg.onload = syncStageToStream;
 
 // Xóa tất cả và load ROI do AI đề xuất
-function loadAutoROI(normalizedPointsArray) {
+// rightTurnZoneY: tọa độ Y chuẩn hóa [0-1] của đường Right Turn Zone (mặc định 0.7)
+function loadAutoROI(normalizedPointsArray, rightTurnZoneY = 0.15) {
     syncStageToStream();
     const canvas = document.getElementById('roi-canvas');
-    if (canvas) canvas.style.display = 'block';
+    if (canvas) canvas.style.display = 'block'; // Đảm bảo canvas không bị ẩn từ lần Save trước
     if (layer) layer.visible(true);
     if (!normalizedPointsArray || normalizedPointsArray.length !== 4) {
         normalizedPointsArray = [
-            { x: 0.1, y: 0.3 },
-            { x: 0.9, y: 0.3 },
-            { x: 1.0, y: 1.0 },
-            { x: 0.0, y: 1.0 }
+            { x: 0.3146, y: 0.6241 }, // 604/1920
+            { x: 0.7625, y: 0.6102 }, // 1464/1920
+            { x: 0.9865, y: 0.9796 }, // 1894/1920
+            { x: 0.1271, y: 0.9917 }  // 244/1920
         ];
     }
     layer.destroyChildren(); // Xóa sạch hình cũ
-    
+
     const w = stage.width();
     const h = stage.height();
-    
-    // Đổi tọa độ 0.0->1.0 thành Pixel trên trình duyệt
+
+    // Đổi tọa độ 0.0->1.0 thành pixel trên trình duyệt
     const absolutePoints = normalizedPointsArray.map(p => ({ x: p.x * w, y: p.y * h }));
-    
-    // Tạo vùng Đường Bình Thường (Xanh) - Mặc định
-    createDraggablePolygon('roi_lane', absolutePoints, '#22c55e');
-    
-    // Tạo sẵn vùng Đường Cấm (Đỏ) ẩn đi - Dùng chung tọa độ đề xuất ban đầu
-    createDraggablePolygon('forbidden_zone', absolutePoints, '#ef4444');
-    
-    toggleForbiddenMode(); // Ẩn hiện đúng theo nút Switch
+
+    // Vùng Đường Bình Thường (xanh lá) — mặc định hiển thị
+    const isForbidden = document.getElementById('chk-forbidden') ? document.getElementById('chk-forbidden').checked : false;
+    createDraggablePolygon('roi_lane', absolutePoints, '#22c55e', !isForbidden);
+
+    // Vùng Đường Cấm (đỏ) — ẩn ngay khi tạo nếu không ở chế độ Đường Cấm
+    createDraggablePolygon('forbidden_zone', absolutePoints, '#ef4444', isForbidden);
+
+    // Đường Right Turn Zone (xanh neon) — kéo theo trục Y
+    createRightTurnZoneLine(rightTurnZoneY * h);
+
+    // Chỉ cần sync visibility anchors (không cần toggle nữa vì đã set từ đầu)
+    layer.find('.anchor-roi_lane').forEach(a => a.visible(!isForbidden));
+    layer.find('.anchor-forbidden_zone').forEach(a => a.visible(isForbidden));
+    const rtzLine = layer.findOne('#rtz_line');
+    const rtzLabel = layer.findOne('#rtz_label');
+    const rtzOverlay = layer.findOne('#rtz_overlay');
+    if (rtzLine)    rtzLine.visible(!isForbidden);
+    if (rtzLabel)   rtzLabel.visible(!isForbidden);
+    if (rtzOverlay) rtzOverlay.visible(!isForbidden);
+    layer.batchDraw();
 }
 
-function createDraggablePolygon(id, points, color) {
+// Tạo vùng theo dõi rẽ phải: overlay màu + đường kẻ kéo được + label hint
+// Tối ưu hiệu năng:
+//   - listening:false  → bỏ qua hit-graph cho shape không tương tác (overlay, label)
+//   - batchDraw()      → gom nhiều lần redraw vào 1 animation frame, tránh vẽ thừa
+//   - Konva.Rect       → shape đơn giản nhất (O(1)), không dùng polygon phức tạp
+function createRightTurnZoneLine(rtzY) {
+    const w = stage.width();
+    const h = stage.height();
+
+    // --- Tính toán ranh giới ngang (X) của vùng rẽ phải ---
+    // Lấy từ ROI polygon nếu có; khớp với right_turn_lane_min=0.65 mặc định trên edge
+    const roiPoly = layer.findOne('#roi_lane');
+    let stopLineY  = h * 0.3;   // fallback
+    let zoneXStart = w * 0.65;  // fallback — 65% từ trái = phần làn bên phải
+    if (roiPoly) {
+        const pts = roiPoly.points(); // flat: [TL.x, TL.y, TR.x, TR.y, BR.x, BR.y, BL.x, BL.y]
+        stopLineY  = Math.min(pts[1], pts[3]);                      // Y cạnh trên ROI
+        zoneXStart = pts[0] + 0.65 * (pts[2] - pts[0]);            // 65% chiều rộng stop line
+    }
+    // Đảm bảo rtzY luôn trên stop line
+    rtzY = Math.min(rtzY, stopLineY - 20);
+    if (rtzY < 0) rtzY = 0;
+
+    // --- Overlay bán trong suốt: vùng sẽ được giám sát rẽ phải ---
+    // Sử dụng Polygon (Konva.Line) thay vì Rect để mép trên bám sát đường xéo của Stop Line
+    const overlay = new Konva.Line({
+        points: [
+            zoneXStart, stopLineY, // Sẽ được tính lại chính xác trên đường Stop Line
+            w, roiPoly ? roiPoly.points()[3] : stopLineY,
+            w, rtzY,
+            zoneXStart, rtzY
+        ],
+        fill: '#00e676',
+        opacity: 0.12,
+        listening: false,
+        closed: true,
+        id: 'rtz_overlay'
+    });
+
+    // --- Đường kẻ ngang: chỉ nửa phải frame (khớp với edge logic) ---
+    const line = new Konva.Line({
+        points: [zoneXStart, 0, w, 0],
+        x: 0, y: rtzY,
+        stroke: '#00e676',
+        strokeWidth: 3,
+        dash: [14, 6],
+        id: 'rtz_line',
+        draggable: true,
+        dragBoundFunc: function(pos) {
+            // Tính lại stopLineY động phòng khi ROI đã bị kéo
+            const poly = layer.findOne('#roi_lane');
+            let currentStopLineY = stopLineY;
+            if (poly) {
+                const pts = poly.points();
+                currentStopLineY = Math.min(pts[1], pts[3]);
+            }
+            // Chỉ kéo theo trục Y, không vượt quá stop line hoặc cạnh trên (0)
+            return { x: 0, y: Math.max(0, Math.min(currentStopLineY - 20, pos.y)) };
+        }
+    });
+
+    // --- Label với hint kéo thả ---
+    // listening:false → không tốn hit-test
+    const label = new Konva.Text({
+        x: zoneXStart + 8,
+        y: rtzY - 18,
+        text: '▶ RIGHT TURN ZONE  (kéo lên/xuống để điều chỉnh)',
+        fill: '#00e676',
+        fontSize: 11,
+        fontStyle: 'bold',
+        listening: false,
+        id: 'rtz_label'
+    });
+
+    // Cursor hint khi hover vào đường kẻ
+    line.on('mouseover', () => { document.body.style.cursor = 'ns-resize'; });
+    line.on('mouseout',  () => { document.body.style.cursor = 'default'; });
+
+    // Khi kéo: chỉ cập nhật 3 thuộc tính tối thiểu, dùng batchDraw để gom redraws
+    line.on('dragmove', function () {
+        const ny = line.y();
+        const poly = layer.findOne('#roi_lane');
+        let currentStopLineY = stopLineY;
+        if (poly) {
+            const pts = poly.points();
+            currentStopLineY = Math.min(pts[1], pts[3]);
+            
+            // Cập nhật đáy của polygon overlay
+            if (overlay.className === 'Line') {
+                const overPts = overlay.points();
+                overPts[5] = ny; // Y top right
+                overPts[7] = ny; // Y top left
+                overlay.points(overPts);
+            }
+        } else {
+            overlay.y(ny);
+            overlay.height(Math.max(0, currentStopLineY - ny)); // fallback nếu là Rect
+        }
+        label.y(ny - 18);
+        layer.batchDraw(); // deferred — không vẽ ngay mà chờ frame tiếp theo
+    });
+
+    layer.add(overlay);
+    layer.add(line);
+    layer.add(label);
+    layer.batchDraw();
+}
+
+function createDraggablePolygon(id, points, color, visible = true) {
     const poly = new Konva.Line({
         points: points.flatMap(p => [p.x, p.y]),
         fill: color + '33', // Trong suốt 20%
         stroke: color,
         strokeWidth: 3,
         closed: true,
-        id: id
+        id: id,
+        visible: visible
     });
     layer.add(poly);
 
@@ -362,15 +633,66 @@ function createDraggablePolygon(id, points, color) {
             stroke: color,
             strokeWidth: 2,
             draggable: true,
-            name: `anchor-${id}`
+            name: `anchor-${id}`,
+            visible: visible  // Anchor cũng ẩn/hiện cùng polygon
         });
 
         anchor.on('dragmove', function() {
             const newPoints = poly.points().slice();
-            newPoints[index * 2] = anchor.x();
+            newPoints[index * 2]     = anchor.x();
             newPoints[index * 2 + 1] = anchor.y();
             poly.points(newPoints);
-            layer.draw();
+            
+            // Cập nhật lại Right Turn Zone nếu đang kéo vùng ROI chính
+            if (id === 'roi_lane') {
+                const rtzOverlay = layer.findOne('#rtz_overlay');
+                const rtzLine = layer.findOne('#rtz_line');
+                const rtzLabel = layer.findOne('#rtz_label');
+                
+                if (rtzOverlay && rtzLine) {
+                    const stopLineY = Math.min(newPoints[1], newPoints[3]);
+                    const zoneXStart = newPoints[0] + 0.65 * (newPoints[2] - newPoints[0]);
+                    const w = stage.width();
+                    
+                    let currentRtzY = rtzLine.y();
+                    if (currentRtzY > stopLineY - 20) {
+                        currentRtzY = stopLineY - 20;
+                        if (currentRtzY < 0) currentRtzY = 0;
+                        rtzLine.y(currentRtzY);
+                        if (rtzLabel) rtzLabel.y(currentRtzY - 18);
+                    }
+                    rtzLine.points([zoneXStart, 0, w, 0]);
+                    
+                    // Cập nhật hình dáng overlay (Polygon)
+                    if (rtzOverlay.className === 'Line') {
+                        // Tính tọa độ Y của giao điểm giữa x=zoneXStart và đoạn thẳng Stop Line
+                        const x1 = newPoints[0], y1 = newPoints[1];
+                        const x2 = newPoints[2], y2 = newPoints[3];
+                        let yAtZoneStart = y1;
+                        if (x2 !== x1) {
+                            yAtZoneStart = y1 + (y2 - y1) * (zoneXStart - x1) / (x2 - x1);
+                        }
+                        
+                        rtzOverlay.points([
+                            zoneXStart, yAtZoneStart,
+                            w, y2,
+                            w, currentRtzY,
+                            zoneXStart, currentRtzY
+                        ]);
+                    } else {
+                        // Cập nhật vị trí overlay nếu là Rect (fallback)
+                        rtzOverlay.x(zoneXStart);
+                        rtzOverlay.y(currentRtzY);
+                        rtzOverlay.width(w - zoneXStart);
+                        rtzOverlay.height(Math.max(0, stopLineY - currentRtzY));
+                    }
+                    
+                    // Cập nhật lại nhãn
+                    if (rtzLabel) rtzLabel.x(zoneXStart + 8);
+                }
+            }
+            
+            layer.batchDraw(); // gom redraw — tránh vẽ mỗi pixel kéo
         });
 
         anchor.on('mouseover', () => document.body.style.cursor = 'grab');
@@ -379,7 +701,7 @@ function createDraggablePolygon(id, points, color) {
 
         layer.add(anchor);
     });
-    layer.draw();
+    layer.batchDraw();
 }
 
 // ==========================================
@@ -387,17 +709,24 @@ function createDraggablePolygon(id, points, color) {
 // ==========================================
 function toggleForbiddenMode() {
     const isForbidden = document.getElementById('chk-forbidden') ? document.getElementById('chk-forbidden').checked : false;
-    
-    const roiShape = layer.findOne('#roi_lane');
+
+    const roiShape       = layer.findOne('#roi_lane');
     const forbiddenShape = layer.findOne('#forbidden_zone');
-    
-    if (roiShape) roiShape.visible(!isForbidden);
+    const rtzLine        = layer.findOne('#rtz_line');
+    const rtzLabel       = layer.findOne('#rtz_label');
+    const rtzOverlay     = layer.findOne('#rtz_overlay');  // overlay bán trong suốt
+
+    if (roiShape)      roiShape.visible(!isForbidden);
     if (forbiddenShape) forbiddenShape.visible(isForbidden);
-    
+    // RTZ chỉ hiển thị ở chế độ bình thường (không phải đường cấm)
+    if (rtzLine)    rtzLine.visible(!isForbidden);
+    if (rtzLabel)   rtzLabel.visible(!isForbidden);
+    if (rtzOverlay) rtzOverlay.visible(!isForbidden);
+
     layer.find('.anchor-roi_lane').forEach(a => a.visible(!isForbidden));
     layer.find('.anchor-forbidden_zone').forEach(a => a.visible(isForbidden));
-    
-    layer.draw();
+
+    layer.batchDraw(); // gom redraw vào 1 frame
 }
 
 function toggleROILayer() {
@@ -430,6 +759,13 @@ function getCurrentROIPayload() {
         });
     }
 
+    // Lấy vị trí Y chuẩn hóa của đường Right Turn Zone
+    // line.y() là vị trí pixel hiện tại (do dùng position thay vì points[1])
+    const rtzLine = layer && layer.findOne('#rtz_line');
+    const rightTurnZoneBottomY = rtzLine
+        ? Number((rtzLine.y() / h).toFixed(4))
+        : 0.15;   // fallback mặc định
+
     return {
         roi: normalizedPoints.map(p => [p.x, p.y]),
         polygons: [{
@@ -439,7 +775,8 @@ function getCurrentROIPayload() {
         lines: [{
             label: "stop_line",
             points: [normalizedPoints[0], normalizedPoints[1]]
-        }]
+        }],
+        right_turn_zone_bottom_y: rightTurnZoneBottomY   // gửi xuống edge
     };
 }
 
@@ -452,6 +789,12 @@ function resetROI() {
     const resetMode = (pendingVideoStart && (pendingVideoStart.mode === "video" || pendingVideoStart.mode === "video_local")) ||
         (lastStartPayload && (lastStartPayload.mode === "video" || lastStartPayload.mode === "video_local")) ? "video" : "realtime";
 
+    // Reset flag — sau khi reset, auto_roi_proposal được phép hiện canvas lại
+    roiSaved = false;
+
+    const canvas = document.getElementById('roi-canvas');
+    if (canvas) canvas.style.display = 'block';
+
     if (layer) {
         layer.destroyChildren();
         layer.draw();
@@ -462,6 +805,7 @@ function resetROI() {
         : null;
     lastStartPayload = null;
     violationHistory = {};
+    localVideoViolations = [];
     setStopButton(false);
     document.getElementById('violation-list').innerHTML =
         '<div class="text-center text-muted mt-5 small">Đang chờ dữ liệu...</div>';
@@ -504,14 +848,22 @@ function saveROI() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
-    }).then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        lastStartPayload = payload.action === "start" ? payload : lastStartPayload;
-        pendingVideoStart = null;
+    }).then(r => r.json()).then(res => {
+        logSystem(`Da gui lenh ROI thanh cong: ${JSON.stringify(payload.action)}`);
+        
+        // Ẩn canvas và đánh dấu đã lưu — ngăn auto_roi_proposal hiện lại canvas
+        const canvas = document.getElementById('roi-canvas');
+        if (canvas) canvas.style.display = 'none';
+        roiSaved = true;
+
+        if (payload.action === "start") {
+            lastStartPayload = payload;
+            pendingVideoStart = null;
+            logSystem(`Da start camera/video voi ROI moi.`);
+        }
         setStopButton(false);
-        logSystem("Da luu ROI va ap dung xuong Edge.");
         alert("Luu cau hinh thanh cong!");
-    }).catch((error) => logSystem(`Loi luu ROI: ${error}`));
+    }).catch(e => logSystem(`Loi Save ROI: ${e}`));
 }
 
 async function toggleStopContinue() {
@@ -565,6 +917,9 @@ async function sendControl(action, mode = 'realtime') {
         payload.action = 'preview_video';
         pendingVideoStart = { action: 'start', mode: mode, video_name: videoName };
         lastStartPayload = null;
+        roiSaved = false; // Reset để loadAutoROI được phép vẽ lại canvas
+        const roiCanvas = document.getElementById('roi-canvas');
+        if (roiCanvas) roiCanvas.style.display = 'block'; // Hiện lại canvas đã bị ẩn sau lần Save trước
         setStopButton(false);
         if (layer) {
             layer.destroyChildren();
@@ -590,6 +945,9 @@ async function sendControl(action, mode = 'realtime') {
                 videoPlayer.pause();
                 videoPlayer.style.display = 'none';
             }
+            // Hiện lại ROI canvas sau khi dừng
+            const roiCanvasEl = document.getElementById('roi-canvas');
+            if (roiCanvasEl) roiCanvasEl.style.display = 'block';
             streamPlaceholder.style.display = 'block';
         }
     } catch (error) {
@@ -698,8 +1056,53 @@ async function doExport() {
     bootstrap.Modal.getInstance(document.getElementById('exportModal')).hide();
 }
 
-// Initialization logic
-document.addEventListener('DOMContentLoaded', () => {
-    initWebSocket();
-    initROI();
-});
+function clearDashboardState() {
+    // 1. Reset các biến trạng thái
+    violationHistory = {};
+    localVideoViolations = [];
+    pendingVideoStart = null;
+    lastStartPayload = null;
+    roiSaved = false;
+
+    // 2. Reset Konva Canvas
+    if (layer) {
+        layer.destroyChildren();
+        layer.draw();
+    }
+
+    // 3. Reset các con số thống kê và Đèn giao thông
+    document.getElementById('stat-car').innerText = "0";
+    document.getElementById('stat-motorcycle').innerText = "0";
+    document.getElementById('fps-counter').innerText = "FPS: 0";
+    const lightBadge = document.getElementById('stat-light');
+    if (lightBadge) {
+        lightBadge.innerText = "UNKNOWN";
+        lightBadge.className = "badge bg-secondary";
+    }
+
+    // 4. Reset danh sách vi phạm
+    document.getElementById('violation-list').innerHTML =
+        '<div class="text-center text-muted mt-5 small">Đang chờ dữ liệu...</div>';
+
+    // 5. Reset stream views và video player
+    streamImg.src = "";
+    streamImg.style.display = 'none';
+    const videoPlayer = document.getElementById('local-video-player');
+    if (videoPlayer) {
+        try {
+            videoPlayer.pause();
+            videoPlayer.src = "";
+            videoPlayer.load();
+        } catch (e) {}
+        videoPlayer.style.display = 'none';
+    }
+
+    // Hiện lại ROI canvas (bị ẩn khi phát video kết quả)
+    const roiCanvasEl = document.getElementById('roi-canvas');
+    if (roiCanvasEl) roiCanvasEl.style.display = 'block';
+
+    streamPlaceholder.style.display = 'flex';
+    streamPlaceholder.innerHTML = '<div class="text-center"><h4 class="text-primary fw-bold">HỆ THỐNG GIÁM SÁT VI PHẠM GIAO THÔNG AI</h4><p class="text-muted small">Vui lòng bấm BẮT ĐẦU GIÁM SÁT hoặc CHẠY XỬ LÝ PHẠT để bắt đầu luồng dữ liệu.</p></div>';
+
+    logSystem("🔄 Đã chuyển tab. Đã làm sạch trạng thái và dữ liệu Dashboard.");
+}

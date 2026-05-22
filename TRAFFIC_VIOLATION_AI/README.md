@@ -1,241 +1,375 @@
 # 🚦 Traffic Violation Detection (Pro Version - MQTT Hybrid)
 
+---
+
 ## 📁 Cấu trúc thư mục dự án
 
 ```text
 TRAFFIC_VIOLATION_AI/
 │
 ├── config/                        # Thư mục cấu hình chung
-│   ├── cameras.json               # Lưu danh sách IP/ID của các camera
-│   └── default_zones.json         # Lưu các mẫu zone mặc định
+│   ├── cameras.json               # Danh sách IP/ID các camera
+│   └── default_zones.json         # Mẫu zone mặc định
 │
-├── docs/                          
+├── docs/
 │   └── Phân_tich_he_thong_G4.md   # Bản phân tích kiến trúc MQTT
 │
 ├── edge/                          # [TRẠM BIÊN - JETSON NANO]
-│   ├── edge_config.py             # ⚙️ File cấu hình trung tâm (MQTT Broker, Thresholds, Camera ID).
-│   ├── main_edge.py               # 🚀 Trái tim của Edge: Chạy MQTT Client, bắt hình YOLO, gọi Engine kiểm tra lỗi và Publish dữ liệu.
-│   ├── models/                    # Thư mục Model nhẹ, tối ưu cho Edge
-│   │   ├── yolo12n.pt             # Model bắt xe (sẽ convert sang TensorRT .engine)
-│   │   ├── model_detect_traffic_light.pt # Model bắt đèn giao thông
-│   │   └── bytetrack.yaml         # File cấu hình tracker
-│   ├── utils/                     # Các module AI Logic chuyên biệt
-│   │   ├── capture_utils.py       # Chứa hàm `smart_crop` (cắt mở rộng viền) và mã hóa Base64 siêu tốc.
-│   │   ├── lane_detection.py      # Thuật toán Data-Driven tự động học và chia làn đường sau 100 frame.
-│   │   └── violation_engine.py    # Động cơ kiểm tra combo lỗi: Vượt đèn (có chờ rẽ phải), Đi ngược chiều, Sai làn.
-│   ├── videos/                    # Thư mục chứa các file video test nằm sẵn trên Jetson (Zero-Upload).
-│   └── requirements_edge.txt
+│   ├── edge_config.py             # ⚙️ Cấu hình trung tâm: MQTT Broker, Thresholds, Camera ID
+│   ├── main_edge.py               # 🚀 MQTT Client + YOLO inference + Publish vi phạm
+│   ├── models/                    # Model nhẹ tối ưu cho Edge
+│   │   ├── yolo12n.engine         # Model phát hiện xe (TensorRT)
+│   │   ├── model_detect_traffic_light.engine  # Model phát hiện đèn (TensorRT)
+│   │   └── bytetrack.yaml         # Cấu hình tracker
+│   ├── utils/
+│   │   ├── capture_utils.py       # smart_crop + mã hóa Base64
+│   │   ├── lane_detection.py      # Tự học phân làn sau 100 frame
+│   │   └── violation_engine.py    # Kiểm tra: Vượt đèn, Ngược chiều, Sai làn
+│   ├── shared/
+│   │   ├── schemas.py             # Pydantic schemas cho MQTT packets
+│   │   └── zones_utils.py         # Toán học hình học: ROI, perspective
+│   ├── videos/                    # Video test nằm sẵn trên Jetson
+│   └── models/requirements_edge.txt
 │
-├── scripts/                       # Các tool hỗ trợ triển khai (DevOps)
-│   ├── export_tensorrt.py         # Script convert YOLO .pt sang .engine
-│   ├── deploy_edge.sh             # Script đẩy code tự động lên Jetson
-│   └── backup_db.sh               
-│
-├── server/                        # [MÁY CHỦ TRUNG TÂM - DASHBOARD]
-│   ├── api_main.py                # 🌐 Trái tim của Server: FastAPI + Subscribe MQTT + Đẩy dữ liệu vào MongoDB Atlas + WebSocket lên UI.
-│   ├── module_utils.py            # 🧠 Module chứa EasyOCR và logic bắt format biển số VN
+├── server/                        # [MÁY CHỦ TRUNG TÂM]
+│   ├── api_main.py                # 🌐 FastAPI + MQTT Subscribe + MongoDB + WebSocket
+│   ├── module_utils.py            # 🧠 EasyOCR + logic biển số VN
 │   ├── database/
-│   │   └── owners_sample.csv      # File CSV cơ sở dữ liệu chủ xe (để tra cứu offline).
-│   ├── models/                    # Thư mục Model nặng (chạy trên Server)
-│   │   └── model_detect_license_plate.pt # Model bắt Bounding Box của biển số.
-│   ├── static/                    # Frontend Assets
-│   │   ├── style.css              
-│   │   ├── app.js                 
-│   │   └── favicon.ico
-│   ├── templates/                 # Frontend UI
-│   │   └── index.html             
-│   ├── violations/                # Folder lưu dự phòng ảnh vi phạm (local fallback nếu rớt mạng).
-│   ├── uploads/                   # Thư mục dự phòng (không còn dùng để upload video).
+│   │   └── owners_sample.csv      # CSDL chủ xe tra cứu offline
+│   ├── models/
+│   │   └── model_detect_license_plate.pt
+│   ├── static/                    # Frontend: style.css, app.js, favicon.ico
+│   ├── templates/
+│   │   └── index.html             # Dashboard UI
+│   ├── violations/                # Thư mục lưu ảnh vi phạm
 │   └── requirements_server.txt
 │
-├── shared/                        # [GIAO THỨC CHUNG EDGE & SERVER]
-│   ├── schemas.py                 # 📝 Cấu trúc Pydantic quy định format chuẩn của tin nhắn MQTT (ViolationPacket, Heartbeat, ControlCommand...).
-│   └── zones_utils.py             # 📐 Bộ công cụ Toán học/Hình học: Tính Vector ngược chiều, xét giao điểm đè vạch, điểm nằm trong đa giác.
-│
-├── README.md                      # Hướng dẫn cài đặt project
-└── .gitignore                     # Bỏ qua các file rác, __pycache__, thư mục ảo...
+├── README.md
+└── .gitignore
 ```
 
 ---
 
-## 💻 Hướng dẫn truy cập và điều khiển Jetson Nano
+## 🏗 Kiến trúc hệ thống
 
-Để truy cập và điều khiển Jetson Nano từ Laptop của bạn một cách mượt mà nhất cho đồ án này, dưới đây là 3 cách từ cơ bản đến "Pro":
+```
+[Jetson Nano]                    [Server]                  [Browser]
+  Camera                           MQTT Broker
+  YOLO Inference    →  MQTT  →    FastAPI (api_main.py)  →  WebSocket  →  Dashboard
+  main_edge.py         topics:     OCR Biển số
+                       violation/  MongoDB Atlas
+                       heartbeat/  
+                       stream/     
+```
 
-### CÁCH 1: Kết nối trực tiếp qua cáp Micro-USB (Dễ nhất, không cần mạng)
-Khi bạn mới mua Jetson Nano về hoặc đem lên trường bảo vệ mà không có Wi-Fi, đây là cứu cánh tuyệt vời nhất. Khi cắm cáp Micro-USB vào máy tính, Jetson Nano sẽ tự động tạo ra một mạng LAN ảo (RNDIS).
-
-**Các bước thực hiện:**
-1. Cắm cáp nguồn (Jack DC) cho Jetson Nano để khởi động.
-2. Dùng cáp Micro-USB kết nối cổng Micro-USB của Jetson Nano vào cổng USB của Laptop.
-3. Chờ khoảng 1-2 phút để Jetson Nano khởi động xong.
-4. Mở Terminal (trên Mac/Linux) hoặc Command Prompt/PowerShell (trên Windows) và gõ lệnh:
-   ```bash
-   ssh <tên_user_của_jetson>@192.168.xx.x
-   # Ví dụ: ssh larry@192.168.55.1
-   ```
-5. Nhập mật khẩu của Jetson Nano. Vậy là bạn đã vào được Terminal của Jetson!
-
-### CÁCH 2: SSH qua mạng LAN / Wi-Fi (Dùng khi chạy thực tế)
-Khi bạn đã cắm dây mạng LAN từ Router vào Jetson Nano (hoặc gắn USB Wi-Fi cho nó), cả Laptop và Jetson Nano phải dùng chung một mạng.
-
-**Các bước thực hiện:**
-1. Cắm dây LAN từ Router vào Jetson Nano.
-2. Tìm địa chỉ IP của Jetson Nano. Có 2 cách:
-   - **Cách lười:** Vào trình duyệt gõ địa chỉ IP của Router (thường là `192.168.1.1`), vào phần DHCP Client List tìm xem thiết bị nào tên "Jetson" hoặc "Ubuntu" rồi lấy IP.
-   - **Cách trực tiếp:** Nếu có màn hình kết nối với Jetson Nano, mở Terminal và gõ:
-     ```bash
-     systemctl status ssh # Kiểm tra trạng thái ssh
-     ```
-     Nếu chưa mở:
-     ```bash
-     sudo systemctl enable ssh
-     sudo systemctl start ssh
-     ```
-     Lấy địa chỉ IP của Jetson bằng:
-     ```bash
-     ifconfig
-     # hoặc
-     ip addr show wlan0
-     ```
-   - **Cách Ping:** Mở Terminal/CMD trên Laptop gõ lệnh:
-     ```bash
-     ping <tên_host_của_jetson>.local 
-     # Ví dụ: ping jetson-nano.local
-     ```
-3. SSH vào thiết bị bằng IP vừa tìm được:
-   ```bash
-   ssh <tên_user_của_jetson>@<địa_chỉ_IP>
-   # Ví dụ: ssh larry@192.168.1.15
-   ```
-
-### 🌟 CÁCH 3: Dùng VS Code Remote - SSH (CỰC KỲ KHUYÊN DÙNG)
-Bạn không thể nào sửa code file `main_edge.py` bằng trình soạn thảo nano đen trắng trên Terminal được, sẽ rất cực. Hãy dùng chính VS Code trên Laptop của bạn để sửa code nằm trong Jetson!
-
-**Các bước thực hiện:**
-1. Mở **VS Code** trên Laptop.
-2. Vào mục **Extensions**, tìm và cài đặt extension: **Remote - SSH** (của Microsoft).
-3. Bấm vào biểu tượng màu xanh lá `><` ở góc dưới cùng bên trái.
-4. Chọn **Connect to Host...** -> **Add New SSH Host...**
-5. Gõ lệnh SSH: `ssh <user>@<IP>`.
-6. Chọn hệ điều hành đích là Linux, nhập mật khẩu.
-7. Chọn **Open Folder** và mở thư mục chứa code Đồ án.
-
-👉 **Mẹo:** Bây giờ bạn có thể sửa code trực tiếp bằng giao diện VS Code, và mở Terminal ngay trong VS Code để chạy lệnh `python3 main_edge.py`.
-
-### ⚠️ (Tùy chọn) CÁCH 4: Remote Desktop (Cần giao diện đồ họa)
-Bạn có thể cài phần mềm NoMachine hoặc dùng VNC có sẵn của Ubuntu.
-Tuy nhiên, **KHÔNG KHUYÊN DÙNG** vì xuất giao diện đồ họa qua mạng tốn rất nhiều RAM và CPU của Jetson Nano, khiến FPS của model YOLO bị tụt giảm. Đồ án của chúng ta đã có Dashboard Web, chỉ cần dùng SSH để chạy ngầm là tối ưu nhất.
+**Yêu cầu:** Jetson Nano và Server phải **cùng mạng LAN**, Server có IP tĩnh.
 
 ---
 
-## 🛠 Hướng dẫn triển khai hệ thống (Deploy)
+## ⚙️ Cấu hình trước khi chạy
 
-### 1. Chuẩn bị môi trường trên Jetson Nano
+Mở `edge/edge_config.py`, cập nhật 2 thông số quan trọng:
 
-```bash
-# Cập nhật hệ thống
-sudo apt-get update
-sudo apt-get upgrade -y
-
-# Cài đặt pip và các thư viện biên dịch cần thiết
-sudo apt-get install -y python3-pip python3-dev libjpeg-dev liblapack-dev libblas-dev gfortran
-
-# Nâng cấp pip và cài đặt công cụ theo dõi
-python3 -m pip install --upgrade pip
-sudo apt update
-sudo apt install htop -y
-sudo -H pip3 install -U jetson-stats
-sudo systemctl restart jetson_stats.service
-sudo reboot
-```
-
-### 2. Cài đặt PyTorch và Torchvision cho Jetson Nano
-
-**Cài đặt PyTorch (Bản 1.10.0 cho JetPack 4.6):**
-```bash
-wget https://nvidia.box.com/shared/static/fjtbno0vpo676a25cgvuqc1wty0fkkg6.whl -O torch-1.10.0-cp36-cp36m-linux_aarch64.whl
-sudo apt-get install python3-pip libopenblas-base libopenmpi-dev 
-pip3 install Cython
-pip3 install "Pillow==8.4.0"
-pip3 install numpy torch-1.10.0-cp36-cp36m-linux_aarch64.whl
-```
-
-**Biên dịch và cài đặt Torchvision:**
-```bash
-sudo apt-get install libjpeg-dev zlib1g-dev libpython3-dev libavcodec-dev libavformat-dev libswscale-dev
-git clone --branch v0.11.1 https://github.com/pytorch/vision torchvision
-cd torchvision
-export BUILD_VERSION=0.11.1
-python3 setup.py install --user
-cd ..
-```
-
-### 3. Cài đặt Ultralytics (YOLO) và MQTT
-
-```bash
-# Cài đặt các thư viện phụ trợ
-pip3 install matplotlib pyyaml tqdm scipy seaborn pandas pydantic paho-mqtt
-
-# Kiểm tra GPU có hoạt động không
-python3 -c "import torch; print(torch.cuda.is_available())"
-```
-
-### 4. Truyền tải code lên Jetson Nano
-
-Trên Terminal của **Laptop**, trỏ tới thư mục chứa source code và đẩy lên Jetson bằng lệnh `scp`:
-
-```bash
-# Chuyển toàn bộ thư mục edge sang Jetson Nano
-scp -r ./edge <tên_user_jetson>@<IP_của_Jetson>:/home/<tên_user_jetson>/
-
-# Tạo thư mục mới trên Jetson và chuyển file cụ thể
-ssh <tên_user_jetson>@<IP_của_Jetson> "mkdir -p /home/<tên_user_jetson>/edge/<tên_thư_mục_mới>"
-scp <tên_file> <tên_user_jetson>@<IP_của_Jetson>:/home/<tên_user_jetson>/edge/<tên_thư_mục_mới>
+```python
+CAMERA_ID  = "JETSON_01"          # Tên duy nhất cho mỗi Jetson
+MQTT_BROKER = "192.168.1.x"       # IP của máy Server trong mạng LAN
 ```
 
 ---
 
-## 🚀 Chạy hệ thống với Docker trên Jetson Nano
+## 🖥 PHẦN 1: Cài đặt Server
 
-**BƯỚC 1: Di chuyển vào thư mục chứa code**
-Trên Terminal của Jetson Nano, đi tới thư mục chứa file `main_edge.py`:
+### Bước 1 — Cài dependencies
+
 ```bash
-cd /home/<user>/edge
+cd server/
+pip install -r requirements_server.txt
 ```
 
-**BƯỚC 2: Tải và Chạy Docker (Đã thêm Volume & Network)**
-Chạy lệnh sau để khởi động môi trường GPU cách ly:
+### Bước 2 — Cài và khởi động MQTT Broker (Mosquitto)
+
 ```bash
-t=ultralytics/ultralytics:latest-jetson-jetpack4
-sudo docker pull $t
+sudo apt-get install -y mosquitto mosquitto-clients
+sudo systemctl enable mosquitto
+sudo systemctl start mosquitto
 
-# Bật vùng cách ly GPU, mount thư mục hiện tại vào /workspace
-sudo docker run -it --ipc=host --network host --runtime=nvidia -v $(pwd):/workspace ultralytics/ultralytics:latest-jetson-jetpack4 /bin/bash
-
-# Lùi lại thư mục gốc và vào workspace
-ls
-cd workspace
+# Kiểm tra
+sudo systemctl status mosquitto
 ```
 
-**BƯỚC 3: Cài đặt bổ sung và khởi chạy AI**
-Sau khi vào Docker, cài đặt thêm các thư viện cần thiết và chạy ứng dụng:
+### Bước 3 — Chạy Server
+
 ```bash
-# Cài duy nhất MQTT & Pydantic
-pip install --upgrade pip setuptools wheel packaging
-pip install "paho-mqtt<2.0.0"
-pip install pydantic
-
-export PYTHONPATH=/ultralytics:$PYTHONPATH
-
-# Nếu cần cài nano
-sudo apt update && sudo apt install nano -y
-
-# Khởi động hệ thống Edge (Jetson Nano)
-python3 main_edge.py
-```
-
-**Khởi động Server (chạy trên máy chủ trung tâm):**
-```bash
+cd server/
 uvicorn api_main:app --host 0.0.0.0 --port 8000
 ```
+
+Mở Dashboard tại: `http://<IP_server>:8000`
+
+---
+
+## 🤖 PHẦN 2: Cài đặt Edge (Jetson Nano)
+
+### 2.1 — Kết nối vào Jetson Nano
+
+**Cách 1: SSH qua LAN (thường dùng)**
+```bash
+ssh larry@<IP_jetson>
+# Ví dụ: ssh larry@192.168.1.8
+```
+
+> Lần đầu SSH sau khi reflash JetPack bị lỗi "host key changed":
+> ```bash
+> ssh-keygen -R <IP_jetson>   # xóa key cũ rồi SSH lại
+> ```
+
+**Cách 2: Micro-USB (không cần mạng, khi bảo vệ đồ án)**
+1. Cắm cáp Micro-USB từ Jetson → Laptop
+2. Chờ 1-2 phút để khởi động
+3. `ssh larry@192.168.55.1`
+
+**Cách 3: VS Code Remote-SSH (khuyên dùng để sửa code)**
+1. Cài extension **Remote - SSH** trong VS Code
+2. `><` góc dưới trái → Connect to Host → nhập `ssh larry@<IP>`
+3. Open Folder → chọn thư mục edge
+
+---
+
+### 2.2 — Chuyển code lên Jetson
+
+```bash
+# Từ máy tính, chuyển toàn bộ thư mục edge
+scp -r ./edge larry@<IP_jetson>:/home/larry/
+
+# Chuyển video test
+scp video_test.mp4 larry@<IP_jetson>:/home/larry/edge/videos/
+```
+
+---
+
+### 2.3 — Cài Docker và pull image
+
+```bash
+# Cài Docker (nếu chưa có)
+sudo apt-get install -y docker.io
+sudo systemctl enable docker
+
+# Pull image Ultralytics cho Jetson JetPack 4
+sudo docker pull ultralytics/ultralytics:latest-jetson-jetpack4
+```
+
+---
+
+### 2.4 — Build OpenCV với GStreamer *(Chỉ làm 1 lần)*
+
+> **Tại sao cần?** `opencv-python` từ pip không có GStreamer → NVDEC không hoạt động.  
+> Sau khi build: CPU giảm ~30-40% tải decode video → YOLO inference nhanh hơn.  
+> **Sau khi build xong phải `docker commit` ngay** để không mất công.
+
+#### Kiểm tra điều kiện trước khi build
+
+```bash
+# Bên trong container
+python3.8 -c "import cv2; print(cv2.getBuildInformation())" | grep GStreamer
+# → NO: cần build  |  YES: đã xong, bỏ qua phần này
+
+ls -la /dev/nvhost-nvdec 2>/dev/null && echo "✅ Device OK" || echo "❌ Thiếu --device flag"
+gst-inspect-1.0 nvv4l2decoder 2>/dev/null | head -2 && echo "✅ Plugin OK" || echo "❌ Plugin thiếu"
+```
+
+#### B0 — Bật screen trên HOST (bắt buộc để tránh mất build khi SSH đứt)
+
+```bash
+# Trên HOST larry@jetson — TRƯỚC KHI chạy docker
+sudo apt-get install -y screen    # nếu chưa có
+screen -S opencv_build
+```
+
+| Thao tác | Phím tắt |
+|---|---|
+| Detach (thoát nhưng giữ session) | `Ctrl+A` rồi `D` |
+| Reattach (vào lại) | `screen -r opencv_build` |
+
+#### B1 — Chạy Docker với NVDEC device
+
+```bash
+cd /home/larry/edge
+sudo docker run -it --ipc=host --network host --runtime=nvidia \
+    --device=/dev/nvhost-nvdec \
+    -v $(pwd):/workspace \
+    ultralytics/ultralytics:latest-jetson-jetpack4 /bin/bash
+```
+
+#### B2 — Cài GStreamer dev headers
+
+```bash
+apt-get update && apt-get install -y \
+    cmake \
+    libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev \
+    gstreamer1.0-plugins-bad \
+    libgstreamer-plugins-bad1.0-dev
+```
+
+#### B3 — Clone source
+
+```bash
+cd /tmp
+git clone https://github.com/opencv/opencv.git --branch 4.8.0 --depth 1
+git clone https://github.com/opencv/opencv_contrib.git --branch 4.8.0 --depth 1
+```
+
+#### B4 — CMake
+
+```bash
+cd /tmp/opencv && mkdir build && cd build
+
+PY38=/usr/bin/python3.8
+PY38_INC=$(python3.8 -c "import sysconfig; print(sysconfig.get_path('include'))")
+PY38_LIB=$(find /usr -name "libpython3.8*.so*" | grep -v config | head -1)
+PY38_PKG=$(python3.8 -c "import site; print(site.getsitepackages()[0])")
+PY38_NPY=$(python3.8 -c "import numpy; print(numpy.get_include())")
+
+pip3 uninstall opencv-python -y
+
+cmake -D CMAKE_BUILD_TYPE=RELEASE \
+      -D CMAKE_INSTALL_PREFIX=/usr/local \
+      -D WITH_GSTREAMER=ON \
+      -D WITH_CUDA=OFF \
+      -D WITH_CUBLAS=OFF \
+      -D WITH_CUFFT=OFF \
+      -D OPENCV_EXTRA_MODULES_PATH=/tmp/opencv_contrib/modules \
+      -D PYTHON3_EXECUTABLE=$PY38 \
+      -D PYTHON3_LIBRARY=$PY38_LIB \
+      -D PYTHON3_INCLUDE_DIR=$PY38_INC \
+      -D PYTHON3_NUMPY_INCLUDE_DIRS=$PY38_NPY \
+      -D PYTHON3_PACKAGES_PATH=$PY38_PKG \
+      -D PYTHON_DEFAULT_EXECUTABLE=$PY38 \
+      -D BUILD_opencv_python3=ON \
+      -D BUILD_opencv_python2=OFF \
+      -D BUILD_EXAMPLES=OFF \
+      -D BUILD_TESTS=OFF \
+      -D BUILD_PERF_TESTS=OFF \
+      ..
+```
+
+> Verify output cmake — phải thấy:
+> ```
+> GStreamer:    YES (1.14.5)
+> Interpreter: /usr/bin/python3.8
+> ```
+> Nếu `CUDA_npp*: NOTFOUND` → bình thường, dùng `WITH_CUDA=OFF` là đúng.
+
+#### B5 — Build (~2-3 tiếng, có thể tắt SSH)
+
+```bash
+nohup make -j4 > /tmp/build.log 2>&1 &
+trap '' HUP
+tail -f /tmp/build.log
+```
+
+- Tắt SSH an toàn: `Ctrl+C` → `Ctrl+A D` (detach screen) → đóng SSH
+- Sáng hôm sau: SSH lại → `screen -r opencv_build` → kiểm tra log
+- Build thành công: dòng cuối log là `[100%] Built target opencv_python3`
+
+#### B6 — Cài và verify
+
+```bash
+make install && ldconfig
+
+python3.8 -c "import cv2; print(cv2.getBuildInformation())" | grep GStreamer
+# Kỳ vọng: GStreamer:    YES (1.14.5)
+```
+
+#### B7 — Test NVDEC
+
+```bash
+python3.8 - << 'EOF'
+import cv2
+pipeline = (
+    "filesrc location=/workspace/videos/video_test.mp4 ! "
+    "qtdemux ! h264parse ! nvv4l2decoder ! "
+    "nvvidconv ! video/x-raw,format=BGRx ! "
+    "videoconvert ! video/x-raw,format=BGR ! appsink drop=1"
+)
+cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+print("✅ NVDEC OK!" if cap.isOpened() else "❌ NVDEC fail")
+cap.release()
+EOF
+```
+
+#### B8 — Docker commit ⚠️ Làm ngay, không để quên
+
+```bash
+# Từ HOST (terminal mới)
+sudo docker ps
+sudo docker commit <container_id> ultralytics-gstreamer:jetson
+
+# Dọn source build bên trong container (~3GB)
+rm -rf /tmp/opencv /tmp/opencv_contrib && apt-get clean
+
+# Commit lần cuối sau khi dọn
+sudo docker commit <container_id> ultralytics-gstreamer:jetson
+sudo docker images | grep ultralytics-gstreamer
+```
+
+---
+
+### 2.5 — Chạy Edge hàng ngày
+
+> Từ lần này trở đi dùng image `ultralytics-gstreamer:jetson` đã có GStreamer sẵn.
+
+**Bước 1 — Vào Docker:**
+```bash
+cd /home/larry/edge
+sudo docker run -it --ipc=host --network host --runtime=nvidia \
+    --device=/dev/nvhost-nvdec \
+    -v $(pwd):/workspace \
+    ultralytics-gstreamer:jetson /bin/bash
+```
+
+**Bước 2 — Cài packages (lần đầu hoặc sau khi tạo container mới):**
+```bash
+pip install --upgrade pip setuptools wheel packaging
+pip install "paho-mqtt<2.0.0"
+pip install pydantic numpy==1.23.5
+pip3 install "lap>=0.5.12"
+```
+
+> Sau khi cài xong nhớ commit lại: `sudo docker commit <id> ultralytics-gstreamer:jetson`
+
+**Bước 3 — Chạy Edge:**
+```bash
+cd /workspace
+export PYTHONPATH=/ultralytics:$PYTHONPATH
+python3.8 main_edge.py
+```
+
+---
+
+## 🔁 Quy trình vận hành hàng ngày
+
+```
+1. Bật Server:    uvicorn api_main:app --host 0.0.0.0 --port 8000
+2. SSH Jetson:    ssh larry@<IP>
+3. Vào Docker:    sudo docker run ... ultralytics-gstreamer:jetson /bin/bash
+4. Chạy Edge:     cd /workspace && python3.8 main_edge.py
+5. Mở Dashboard:  http://<IP_server>:8000
+```
+
+---
+
+## 🆘 Troubleshooting
+
+| Triệu chứng | Nguyên nhân | Cách xử lý |
+|---|---|---|
+| `socket.timeout` khi chạy main_edge.py | MQTT Broker chưa chạy hoặc sai IP | Kiểm tra `MQTT_BROKER` trong `edge_config.py`, khởi động Mosquitto trên server |
+| `GStreamer: NO` sau build | cmake chạy sai Python | Kiểm tra `install path` trong cmake output phải là `python3.8` |
+| `Resource not found` khi test NVDEC | File video không tồn tại | Copy video vào `/workspace/videos/` |
+| `❌ Device chưa map` | Thiếu `--device=/dev/nvhost-nvdec` | Thêm flag vào lệnh `docker run` |
+| Container chết khi SSH đóng | Không dùng `screen` trước `docker run` | Dùng `screen` trên HOST trước, build lại |
+| SQUASHFS error khi boot | SD card corrupt (mất điện khi build) | Reflash JetPack, làm lại từ mục 2.3 |
+| `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED` | Reflash JetPack tạo SSH key mới | `ssh-keygen -R <IP_jetson>` rồi SSH lại |
+| `cmake: command not found` | Container chưa cài cmake | `apt-get install -y cmake` |
+| `lap` tự download lúc chạy | Chưa cài sẵn | `pip3 install "lap>=0.5.12"` trước khi chạy |
+| `numpy==1.23.5 not found` | Version mismatch | `pip3 install numpy==1.23.5` |

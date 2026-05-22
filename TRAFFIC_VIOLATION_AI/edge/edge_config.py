@@ -19,7 +19,7 @@ CAMERA_ID = "JETSON_01"
 # 2. CẤU HÌNH KẾT NỐI MQTT
 # ==========================================
 # Khuyến nghị dùng IP tĩnh của Server Local hoặc HiveMQ Cloud
-MQTT_BROKER = "10.28.130.157" 
+MQTT_BROKER = "172.20.10.3" 
 MQTT_PORT = 1883
 MQTT_CLIENT_ID = f"{CAMERA_ID}_CLIENT"
 MQTT_KEEPALIVE = 60
@@ -42,8 +42,10 @@ MODELS_DIR = os.path.join(BASE_DIR, "models")
 VIDEOS_DIR = os.path.join(BASE_DIR, "videos")
 
 # Tên file Models
-YOLO_VEHICLE_MODEL = os.path.join(MODELS_DIR, "yolo12n.engine") # Nên đổi thành .engine khi chạy thật
-YOLO_LIGHT_MODEL = os.path.join(MODELS_DIR, "model_detect_traffic_light.engine")
+# Dùng .pt nếu .engine chưa được export lại trên Jetson này (sau khi reflash JetPack)
+# Sau khi export engine mới → đổi lại thành .engine để tăng tốc độ
+YOLO_VEHICLE_MODEL = os.path.join(MODELS_DIR, "yolo12n.pt")
+YOLO_LIGHT_MODEL = os.path.join(MODELS_DIR, "model_detect_traffic_light.pt")
 TRACKER_CONFIG = os.path.join(MODELS_DIR, "bytetrack.yaml") # Hoặc đường dẫn tuyệt đối đến file yaml
 
 # ==========================================
@@ -55,14 +57,27 @@ CONF_TRAFFIC_LIGHT = 0.45
 
 # Cấu hình Smart Capture
 SMART_CROP_PADDING = 40        # Số pixel mở rộng khi cắt ảnh vi phạm
-JPEG_ENCODE_QUALITY = 98       # Chất lượng nén ảnh gửi qua MQTT (1-100)
+JPEG_ENCODE_QUALITY = 75       # Chất lượng nén ảnh gửi qua MQTT (1-100). 75 = đủ để OCR, nhẹ hơn 98 rất nhiều trên Jetson
 STREAM_JPEG_QUALITY = 50       # Chất lượng nén cho luồng Realtime (giảm để mượt)
 STREAM_RESOLUTION = (640, 360) # Độ phân giải luồng Realtime đẩy lên Dashboard
+EVIDENCE_JPEG_QUALITY = 55     # Chất lượng ảnh bằng chứng full-frame (đủ để tra cứu, nhẹ hơn crop)
+EVIDENCE_RESOLUTION   = (640, 360)  # Độ phân giải ảnh bằng chứng full-frame (downscale 2× từ 1280×720)
+
+# Phân loại class YOLO (giống full_main.py)
+CAR_CLASSES   = {2, 5, 7}      # Car, Bus, Truck
+MOTO_CLASSES  = {3}            # Motorcycle
+VEHICLE_CLASSES = CAR_CLASSES | MOTO_CLASSES
 
 # Cấu hình Violation Engine
 MAX_TRACK_HISTORY = 30         # Số lượng frame lưu vết quỹ đạo cho mỗi xe
 MIN_FRAMES_WRONG_WAY = 15      # Số frame tối thiểu để xác nhận đi ngược chiều
-RED_LIGHT_WAIT_FRAMES = 3      # Số frame chờ để xác nhận đi thẳng hay rẽ phải
+RED_LIGHT_WAIT_FRAMES = 45     # Số frame tối đa chờ xác nhận rẽ phải (tăng từ 3→45 để theo dõi đủ lâu)
+
+# Cấu hình vùng theo dõi rẽ phải (Right-Turn Zone)
+# Tỷ lệ so với chiều cao frame — tương đương right_turn_zone_bottom_y trong full_main.py
+RIGHT_TURN_ZONE_BOTTOM_Y_RATIO = 0.15  # vùng theo dõi từ rtz_y -> stop_line_y (rtz_y < stop_line_y)
+RIGHT_TURN_DX_THRESHOLD = 15           # Ngưỡng dx tối thiểu để xác nhận rẽ phải (pixel)
+RIGHT_TURN_RATIO_THRESHOLD = 1.5       # dx phải > 1.5 * |dy| (giống full_main.py, chặt hơn 0.35 cũ)
 
 # ==========================================
 # 5. CẤU HÌNH ROI (Region of Interest) - Calibration
@@ -70,18 +85,28 @@ RED_LIGHT_WAIT_FRAMES = 3      # Số frame chờ để xác nhận đi thẳng 
 # ROI mặc định: Hình thang perspective tương tự full_main.py
 # Điểm: [Top-Left, Top-Right, Bottom-Right, Bottom-Left]
 # Tỷ lệ: 80% chiều rộng đỉnh, 100% chiều rộng đáy
-FRAME_WIDTH = 1280
-FRAME_HEIGHT = 720
+FRAME_WIDTH = 1920
+FRAME_HEIGHT = 1080
 
 DEFAULT_ROI_PTS = [
-    [int(FRAME_WIDTH * 0.1), int(FRAME_HEIGHT * 0.3)],   # Top-Left
-    [int(FRAME_WIDTH * 0.9), int(FRAME_HEIGHT * 0.3)],   # Top-Right
-    [int(FRAME_WIDTH * 1.0), int(FRAME_HEIGHT * 1.0)],   # Bottom-Right
-    [int(FRAME_WIDTH * 0.0), int(FRAME_HEIGHT * 1.0)]    # Bottom-Left
+    [604, 674],   # Top-Left
+    [1464, 659],  # Top-Right
+    [1894, 1058], # Bottom-Right
+    [244, 1071]   # Bottom-Left
 ]
+
 
 # Số frame để học phân làn tự động (giống full_main.py: OBSERVATION_FRAMES = 100)
 LANE_LEARNING_FRAMES = 100
 
 # Alpha cho việc blend làn đường (giống full_main.py: LANE_ALPHA = 0.20)
 LANE_ALPHA = 0.20
+
+# ==========================================
+# 6. CẤU HÌNH ROI CHO ĐÈN TÍN HIỆU
+# ==========================================
+# Không dùng giá trị cố định nữa — parse_light_status() tự tính từ kích thước
+# frame thực tế (w//2 : w, 0 : h//2) giống full_main.py, tránh sai khi camera
+# có độ phân giải khác 1280×720.
+# TRAFFIC_LIGHT_ROI giữ lại chỉ để tham khảo, KHÔNG dùng trong code.
+TRAFFIC_LIGHT_ROI_NOTE = "Computed dynamically in parse_light_status() from actual frame size."
