@@ -88,78 +88,100 @@ class LaneDetector:
             self._calculate_lanes()
 
     def _calculate_lanes(self):
-        """Logic đơn giản:
-        - Làn ô tô 1 : [0.0 → MAX(mép phải xe trái nhất)] qua 100 frame
-        - Vùng giữa : phần còn lại đến ranh giới xe máy (không chia nhỏ)
-        - Làn xe máy : [m_left → 1.0] nếu có
+        """Port trực tiếp từ calculate_data_driven_lanes() trong demo gốc:
+        1. Greedy cluster tâm ô tô (gap ≥ 0.20 → làn mới) → N làn.
+        2. r_boundary = 90th-percentile cạnh phải cụm cuối,
+           nếu đủ xe máy bên phải thì lấy điểm giữa r_car_max và moto_left_15th.
+        3. Chia đều: lane_width = r_boundary / N → ranh giới từng làn.
+        4. car_only_zones: làn có ≤5 xe máy = Làn Ô Tô thuần.
         """
         top_y = self.roi_pts[0][1]
         bot_y = self.roi_pts[2][1]
 
-        if not self.car_frames:
-            self.car_only_zones.append((0.0, 0.35))
-            boundaries = [0.0, 0.35, 1.0]
-            print("[LANE DETECTION] Không phát hiện ô tô, dùng cấu hình mặc định.")
-            self._finalize(boundaries, top_y, bot_y)
-            return
+        # Flatten car_frames → danh sách phẳng (như demo dùng car_boxes_learning)
+        all_car_boxes = [box for frame in self.car_frames for box in frame]
 
-        # ── BƯỚC 1: Tìm MAX mép phải của xe ô tô trái nhất qua tất cả frame ──────
-        w_car_1_max = 0.0
+        # ── Chuẩn hoá toạ độ ────────────────────────────────────────────────
+        cars_norm = []
+        for (x1, y1, x2, y2) in all_car_boxes:
+            nx1 = self.get_normalized_x(x1, y2)
+            nx2 = self.get_normalized_x(x2, y2)
+            if (nx2 - nx1) > 0.02:
+                cars_norm.append({'left': nx1, 'right': nx2, 'center': (nx1 + nx2) / 2.0})
 
-        for frame_cars in self.car_frames:
-            frame_norm = []
-            for (x1, y1, x2, y2) in frame_cars:
-                nx1 = self.get_normalized_x(x1, y2)
-                nx2 = self.get_normalized_x(x2, y2)
-                if (nx2 - nx1) > 0.02:  # loại box quá hẹp (xe ở rìa ROI)
-                    frame_norm.append({'left': nx1, 'right': nx2, 'center': (nx1 + nx2) / 2})
-
-            if frame_norm:
-                leftmost = min(frame_norm, key=lambda c: c['center'])
-                w_car_1_max = max(w_car_1_max, leftmost['right'])
-
-        if w_car_1_max < 0.05:
-            w_car_1_max = 0.35  # fallback an toàn
-
-        # ── BƯỚC 2: m_left từ xe máy (ranh giới phải vùng ô tô) ──────────────
         motos_norm = []
         for (x1, y1, x2, y2) in self.moto_boxes_learning:
             nx1 = self.get_normalized_x(x1, y2)
             nx2 = self.get_normalized_x(x2, y2)
-            motos_norm.append({'left': nx1, 'right': nx2, 'center': (nx1 + nx2) / 2})
+            if (nx2 - nx1) > 0.01:
+                motos_norm.append({'left': nx1, 'right': nx2, 'center': (nx1 + nx2) / 2.0})
 
-        if motos_norm:
-            right_motos = [m for m in motos_norm if m['center'] > w_car_1_max]
-            if right_motos:
-                m_left = float(np.percentile([m['left'] for m in right_motos], 10))
+        if not cars_norm:
+            self.car_only_zones = []
+            boundaries = [0.0, 0.75, 1.0]
+            print(f"[LANE DETECTION] ✅ Không có ô tô → 1 vạch tại 0.75")
+            self._finalize(boundaries, top_y, bot_y)
+            return
+
+        # ── Greedy cluster tâm ô tô (gap ≥ 0.20 → làn mới) ─────────────────
+        car_centers = sorted([c['center'] for c in cars_norm])
+        clusters = []
+        for c in car_centers:
+            if not clusters:
+                clusters.append([c])
             else:
-                m_left = 1.0
+                if c - np.mean(clusters[-1]) < 0.20:
+                    clusters[-1].append(c)
+                else:
+                    clusters.append([c])
+
+        N_car_lanes = len(clusters)
+
+        # ── Ranh giới phải vùng ô tô ─────────────────────────────────────────
+        last_cluster_set = set(clusters[-1])
+        clast_rights = [c['right'] for c in cars_norm if c['center'] in last_cluster_set]
+        r_car_max = float(np.percentile(clast_rights, 90)) if clast_rights else 0.6
+
+        right_motos = [m for m in motos_norm if m['center'] > r_car_max - 0.05]
+
+        if len(right_motos) > 5:
+            m_left = float(np.percentile([m['left'] for m in right_motos], 15))
+            r_boundary = (r_car_max + m_left) / 2.0
+            r_boundary = max(r_car_max + 0.02, r_boundary)
         else:
-            m_left = 1.0
+            r_boundary = r_car_max
 
-        m_left = max(w_car_1_max + 0.05, min(m_left, 0.95))
+        r_boundary = max(0.2, r_boundary)
 
-        # ── BƯỚC 3: Ranh giới 2 vùng đơn giản ───────────────────────────────
-        # [0.0, w_car_1_max]   = Làn ô tô 1 (Car Only)
-        # [w_car_1_max, m_left] = Vùng giữa (không chia nhỏ)
-        # [m_left, 1.0]         = Làn xe máy
-        boundaries = [0.0, w_car_1_max]
-        if m_left < 1.0:
-            boundaries.append(m_left)
-        boundaries.append(1.0)
+        # ── Chia đều làn, đánh dấu car_only_zones ───────────────────────────
+        lane_width = r_boundary / N_car_lanes
+        boundaries = [0.0]
+        car_only_zones = []
 
-        # ── BƯỚC 4: Đánh dấu các vùng ô tô (Vùng cấm xe máy) ───────────────
-        self.car_only_zones.append((0.0, w_car_1_max))
-        
-        # Nếu vùng giữa đủ rộng và không có xe máy (tức là xe máy chỉ ở bên phải m_left),
-        # thì vùng giữa cũng được coi là Làn ô tô 2 (Car Only)
-        if m_left - w_car_1_max > 0.1:
-            self.car_only_zones.append((w_car_1_max, m_left))
+        for i in range(N_car_lanes):
+            b_left  = i * lane_width
+            b_right = (i + 1) * lane_width
+            motos_in_zone = sum(1 for m in motos_norm if b_left <= m['center'] <= b_right)
+            if motos_in_zone <= 5:
+                car_only_zones.append((b_left, b_right))
+            boundaries.append(b_right)
 
-        print(f"[LANE DETECTION] Đã học xong!")
-        print(f"[LANE DETECTION] Mép phải MAX làn ô tô 1 : {w_car_1_max:.3f}")
-        print(f"[LANE DETECTION] Ranh giới xe máy (m_left): {m_left:.3f}")
-        print(f"[LANE DETECTION] Boundaries : {[round(b,3) for b in boundaries]}")
+        boundaries.append(1.0)  # đảm bảo _finalize vẽ đường tại r_boundary
+
+        # Loại ranh giới quá gần nhau (< 0.05)
+        merged = [boundaries[0]]
+        for b in boundaries[1:]:
+            if b - merged[-1] >= 0.05:
+                merged.append(b)
+        if merged[-1] < 1.0:
+            merged.append(1.0)
+        boundaries = merged
+
+        self.car_only_zones = car_only_zones
+
+        print(f"[LANE DETECTION] ✅ Đã học xong! Số làn ô tô: {N_car_lanes}")
+        print(f"[LANE DETECTION] r_boundary: {r_boundary:.3f}")
+        print(f"[LANE DETECTION] Boundaries vẽ: {[round(b, 3) for b in boundaries]}")
         self._finalize(boundaries, top_y, bot_y)
 
     def _finalize(self, boundaries, top_y, bot_y):
