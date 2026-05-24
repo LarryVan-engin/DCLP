@@ -87,7 +87,7 @@ Tùy chọn --display để hiển thị bằng matplotlib.
 
 ⚙️ 5. Tham số quan trọng
 max_age	:
-    Số frame mà tracker “sống sót” khi mất detection	1–5
+    Số frame mà tracker "sống sót" khi mất detection	1–5
 min_hits :	
     Số lần detection liên tiếp để xác nhận tracker mới	1–3
 iou_threshold :	

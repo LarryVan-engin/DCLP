@@ -13,8 +13,8 @@ from utils.prob2lines import getLane
 # ==========================================
 # CẤU HÌNH ĐƯỜNG DẪN 
 # ==========================================
-MODEL_WEIGHTS = 'vgg_SCNN_DULR_w9.pth'  # Thay bằng 'exp10/best.pth' hoặc đường dẫn model của bạn
-IMAGE_PATH = 'test_image.jpg'           # Bức ảnh bạn muốn test
+MODEL_WEIGHTS = r'exp10_best.pth'  # Thay bằng 'exp10/best.pth' hoặc đường dẫn model của bạn
+IMAGE_PATH = r'E:\Video\train\Demo_image_redpassing.png'           # Bức ảnh bạn muốn test
 INPUT_SIZE = (800, 288)                 # (Width, Height) của CULane theo định nghĩa trong model
 # ==========================================
 

@@ -50,6 +50,7 @@ class HeartbeatPacket(BaseModel):
     stats: VehicleStats
     lights: LightStatus
     fps: float
+    avg_inference_ms: Optional[float] = None  # Rolling avg YOLO vehicle inference (last 30 frames)
     active_video: Optional[str] = None
 
 # ==========================================

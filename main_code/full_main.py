@@ -24,7 +24,7 @@ LANE_ALPHA = 0.20
 PATH_HISTORY = 30
 PLATE_CONF = 0.35
 
-VIDEO_NAME = r"E:\Video\train\video_test.mp4" 
+VIDEO_NAME = r"E:\Video\train\nuocngoai.mp4" 
 CONFIG_FILE = f"config_{os.path.splitext(os.path.basename(VIDEO_NAME))[0]}.json"
 DB_FILE = r"D:\VSCode\DCLP\web_application\database\owners_sample.csv"
 LOG_FILE = "./TESTOCR/violations_log.csv"
@@ -175,7 +175,7 @@ def run_calibration_gui(video_path, config_file):
     cap = cv2.VideoCapture(video_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    frame_idx = min(415, total_frames - 1)
+    frame_idx = min(200, total_frames - 1)
     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
     ret, base_frame = cap.read()
     cap.release()
@@ -684,7 +684,7 @@ def process_video(input_path, output_path="output_all_violations.avi"):
                         cv2.imwrite(full_b_path, frame)
 
                         # Ảnh 3: smart crop (bounding box + 65px, đủ nhỏ để rõ xe, đủ rộng để thấy biển)
-                        SC_PAD = 65
+                        SC_PAD = 100
                         scx1 = max(0, x1 - SC_PAD);  scy1 = max(0, y1 - SC_PAD)
                         scx2 = min(FRAME_WIDTH, x2 + SC_PAD); scy2 = min(FRAME_HEIGHT, y2 + SC_PAD)
                         smart_crop_img = frame[scy1:scy2, scx1:scx2]

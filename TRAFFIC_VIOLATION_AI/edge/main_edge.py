@@ -579,6 +579,7 @@ def ai_processing_loop(client):
     last_light_boxes = []
 
     inference_times = []
+    light_inference_times = []
     jpeg_encode_times = []
     stream_encode_times = []
     video_write_times = []
@@ -611,7 +612,9 @@ def ai_processing_loop(client):
             lane_detector.car_only_zones = []
 
         if frame_count % 3 == 1:
+            t_light = time.time()
             new_light, last_light_boxes = parse_light_status(frame, model_traffic_light)
+            light_inference_times.append((time.time() - t_light) * 1000)
             if new_light != "unknown":
                 current_light = new_light
         
@@ -621,8 +624,10 @@ def ai_processing_loop(client):
             cv2.putText(display_frame, f"{label.upper()}:{conf:.2f}",
                         (xl, max(20, yl - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_l, 2)
         
+        t_inf = time.time()
         results = model_vehicle.track(frame, persist=True, tracker=cfg.TRACKER_CONFIG,
                                       verbose=False, iou=0.45, imgsz=640)[0]
+        inference_times.append((time.time() - t_inf) * 1000)
         
         cars = motorcycles = 0
         track_ids = []
@@ -741,12 +746,14 @@ def ai_processing_loop(client):
                         # Ảnh crop rộng hơn (100px) làm bằng chứng ngữ cảnh rõ hơn
                         crop_wide = smart_crop(frame, box, padding=100)
                         
+                        t_jpg = time.time()
                         ev_param = [int(cv2.IMWRITE_JPEG_QUALITY), cfg.EVIDENCE_JPEG_QUALITY]
                         _, buf_a = cv2.imencode('.jpg', cv2.resize(frame, cfg.EVIDENCE_RESOLUTION), ev_param)
-                        
+
                         ann = display_frame.copy()
                         cv2.rectangle(ann, (x1, y1), (x2, y2), (0, 0, 255), 3)
                         _, buf_b = cv2.imencode('.jpg', cv2.resize(ann, cfg.EVIDENCE_RESOLUTION), ev_param)
+                        jpeg_encode_times.append((time.time() - t_jpg) * 1000)
                         
                         if current_mode == "video_local":
                             local_violations_queue.append((
@@ -781,6 +788,7 @@ def ai_processing_loop(client):
             crop_img = smart_crop(frame, v["bbox"], padding=cfg.SMART_CROP_PADDING)
             crop_wide = smart_crop(frame, v["bbox"], padding=100)
             # Ảnh bằng chứng: dùng frame hiện tại (xe vừa mất tracking)
+            t_jpg = time.time()
             ev_param = [int(cv2.IMWRITE_JPEG_QUALITY), cfg.EVIDENCE_JPEG_QUALITY]
             _, buf_a = cv2.imencode('.jpg', cv2.resize(frame, cfg.EVIDENCE_RESOLUTION), ev_param)
             lv_a_b64 = base64.b64encode(buf_a).decode('utf-8')
@@ -793,6 +801,7 @@ def ai_processing_loop(client):
             cv2.putText(ann_lv, f"{cfg.CAMERA_ID} | ID:{v['track_id']}",
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
             _, buf_b = cv2.imencode('.jpg', cv2.resize(ann_lv, cfg.EVIDENCE_RESOLUTION), ev_param)
+            jpeg_encode_times.append((time.time() - t_jpg) * 1000)
             lv_b_b64 = base64.b64encode(buf_b).decode('utf-8')
             if current_mode == "video_local":
                 local_violations_queue.append((
@@ -823,12 +832,15 @@ def ai_processing_loop(client):
         # 5. Gửi Heartbeat & Stats mỗi 30 frame
         if frame_count % 30 == 0:
             current_fps = frame_count / (time.time() - start_time)
+            _recent_inf = inference_times[-30:] if inference_times else []
+            rolling_avg_inf = sum(_recent_inf) / len(_recent_inf) if _recent_inf else 0.0
             heartbeat = {
                 "camera_id": cfg.CAMERA_ID,
                 "mode": current_mode,
                 "stats": {"car": cars, "motorcycle": motorcycles, "bus": 0, "truck": 0},
                 "lights": {"left": "unknown", "straight": current_light},
                 "fps": round(current_fps, 1),
+                "avg_inference_ms": round(rolling_avg_inf, 1),
                 "active_video": active_video
             }
             client.publish(cfg.TOPIC_STATUS, json.dumps(heartbeat), qos=0)
@@ -905,11 +917,14 @@ def ai_processing_loop(client):
             return (sum(lst)/len(lst), min(lst), max(lst)) if lst else (0, 0, 0)
 
         avg_inf, min_inf, max_inf   = _stats(inference_times)
+        avg_lgt, min_lgt, max_lgt   = _stats(light_inference_times)
         avg_jpg, min_jpg, max_jpg   = _stats(jpeg_encode_times)
         avg_str, min_str, max_str   = _stats(stream_encode_times)
         avg_wrt, min_wrt, max_wrt   = _stats(video_write_times)
         avg_fps = 1000.0 / avg_inf if avg_inf > 0 else 0
         total_s = sum(inference_times) / 1000.0
+        elapsed = time.time() - start_time
+        measured_fps = frame_count / elapsed if elapsed > 0 else 0
 
         print("\n" + "="*62)
         print("[EDGE] 📊 DETAILED TIMING REPORT")
@@ -917,12 +932,15 @@ def ai_processing_loop(client):
         print(f"  Decoder Mode        : {decode_mode.upper()}")
         print(f"  Encoder Mode        : {encoder_mode.upper()}")
         print(f"  Tổng frame xử lý  : {len(inference_times)}")
-        print(f"  Tổng thời gian     : {total_s:.1f} s")
-        print(f"  FPS thực tế        : ~{avg_fps:.1f} FPS")
+        print(f"  Tổng thời gian     : {elapsed:.1f} s")
+        print(f"  FPS thực tế        : ~{measured_fps:.1f} FPS")
+        print(f"  FPS lý thuyết      : ~{avg_fps:.1f} FPS  (100% GPU inference)")
         print("-"*62)
-        print(f"  {'Phân tich':28s} {'TB (ms)':>9} {'Min (ms)':>9} {'Max (ms)':>9}")
+        print(f"  {'Phân tích':28s} {'TB (ms)':>9} {'Min (ms)':>9} {'Max (ms)':>9}")
         print("-"*62)
-        print(f"  {'YOLO Inference':28s} {avg_inf:9.1f} {min_inf:9.1f} {max_inf:9.1f}")
+        print(f"  {'YOLO Vehicle Detect':28s} {avg_inf:9.1f} {min_inf:9.1f} {max_inf:9.1f}")
+        if light_inference_times:
+            print(f"  {'YOLO Traffic Light':28s} {avg_lgt:9.1f} {min_lgt:9.1f} {max_lgt:9.1f}")
         if jpeg_encode_times:
             print(f"  {'Nén ảnh + Gửi vi phạm':28s} {avg_jpg:9.1f} {min_jpg:9.1f} {max_jpg:9.1f}")
         else:
@@ -943,9 +961,11 @@ def ai_processing_loop(client):
             "vehicles_seen": total_seen,
             "vehicles_violated": total_violated,
             "violation_rate_pct": round(violation_rate, 2),
-            "total_s": round(total_s, 2),
+            "total_s": round(elapsed, 2),
             "avg_fps": round(avg_fps, 2),
+            "measured_fps": round(measured_fps, 2),
             "inference": {"avg_ms": round(avg_inf,2), "min_ms": round(min_inf,2), "max_ms": round(max_inf,2)},
+            "inference_light": {"avg_ms": round(avg_lgt,2), "min_ms": round(min_lgt,2), "max_ms": round(max_lgt,2), "count": len(light_inference_times)},
             "jpeg_violation": {"avg_ms": round(avg_jpg,2), "min_ms": round(min_jpg,2), "max_ms": round(max_jpg,2), "count": len(jpeg_encode_times)},
             "stream_encode": {"avg_ms": round(avg_str,2), "min_ms": round(min_str,2), "max_ms": round(max_str,2), "count": len(stream_encode_times)},
             "video_write":   {"avg_ms": round(avg_wrt,2), "min_ms": round(min_wrt,2), "max_ms": round(max_wrt,2)},
