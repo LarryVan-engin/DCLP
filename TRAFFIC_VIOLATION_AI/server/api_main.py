@@ -109,15 +109,31 @@ app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), na
 print("[SERVER] Loading Plate Detection model...")
 plate_model = YOLO(MODEL_PLATE_PATH)
 
-vehicle_db = {}
-try:
-    df = pd.read_csv(DB_CSV_PATH)
-    for _, row in df.iterrows():
-        key = re.sub(r"[^A-Z0-9]", "", str(row.get("plate", "")).upper())
-        vehicle_db[key] = row.to_dict()
-    print(f"[SERVER] Loaded {len(vehicle_db)} vehicle records.")
-except Exception as e:
-    print(f"[WARNING] CSV DB load error: {e}")
+def _load_vehicle_db() -> dict:
+    """
+    Đọc owners_sample.csv và trả về dict {normalized_plate: row_dict}.
+    Chuẩn hóa key: xóa tất cả ký tự không phải A-Z/0-9 (bỏ dấu gạch, dấu chấm, khoảng trắng).
+    Hỗ trợ mọi format ghi biển số trong CSV:
+      xe máy  : '81-H1.2204' | '81-H1 2204' | '81H12204'  → key '81H12204'
+      ô tô    : '51A-12345'  | '51A 12345'  | '51A12345'  → key '51A12345'
+    """
+    db: dict = {}
+    if not os.path.exists(DB_CSV_PATH):
+        print(f"[WARNING] DB CSV không tồn tại: {DB_CSV_PATH}")
+        return db
+    try:
+        df = pd.read_csv(DB_CSV_PATH, dtype=str)   # dtype=str: tránh pandas tự ép kiểu số
+        for _, row in df.iterrows():
+            raw_plate = str(row.get("plate", "")).strip()
+            key = re.sub(r"[^A-Z0-9]", "", raw_plate.upper())
+            if key:
+                db[key] = row.to_dict()
+        print(f"[SERVER] Đã tải {len(db)} bản ghi xe từ {DB_CSV_PATH}")
+    except Exception as e:
+        print(f"[WARNING] CSV DB load error: {e}")
+    return db
+
+vehicle_db = _load_vehicle_db()
 
 # Global State
 active_ws: List[WebSocket] = []
@@ -844,6 +860,26 @@ async def test_ocr_endpoint(file: UploadFile = File(...)):
     except Exception as e:
         print(f"[TEST OCR ERROR] {e}")
         return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@app.post("/api/reload_db")
+async def reload_db_endpoint():
+    """
+    Reload owners_sample.csv vào bộ nhớ mà không cần restart server.
+    Gọi endpoint này sau khi thêm/sửa/xóa dữ liệu trong CSV.
+
+    Lưu ý định dạng biển số xe máy trong CSV (2 dòng):
+      Đúng  : '81-H1.2204'  hoặc '81-H1 2204'   (có series digit)
+      Sai   : '81-H.2204'   hoặc '81H-2204'      (thiếu series digit → key 7 ký tự, OCR trả 8)
+    """
+    global vehicle_db
+    new_db = _load_vehicle_db()
+    vehicle_db = new_db
+    return {
+        "status": "ok",
+        "records_loaded": len(vehicle_db),
+        "message": f"Đã reload {len(vehicle_db)} bản ghi từ {DB_CSV_PATH}"
+    }
 
 @app.post("/api/upload_video")
 async def upload_video(file: UploadFile = File(...)):

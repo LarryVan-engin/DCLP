@@ -1028,6 +1028,27 @@ async function testOCR() {
     }
 }
 
+async function reloadVehicleDB() {
+    const statusEl = document.getElementById("reload-db-status");
+    statusEl.textContent = "Đang reload...";
+    statusEl.className = "small text-muted mt-1";
+    try {
+        const res = await fetch("/api/reload_db", { method: "POST" });
+        const data = await res.json();
+        if (res.ok) {
+            statusEl.textContent = `✅ ${data.message}`;
+            statusEl.className = "small text-success mt-1";
+            logSystem(`[DB RELOAD] ${data.message}`);
+        } else {
+            statusEl.textContent = `❌ Lỗi: ${data.detail || "Không xác định"}`;
+            statusEl.className = "small text-danger mt-1";
+        }
+    } catch (e) {
+        statusEl.textContent = `❌ Mất kết nối: ${e}`;
+        statusEl.className = "small text-danger mt-1";
+    }
+}
+
 function showExportModal() {
     const modal = new bootstrap.Modal(document.getElementById('exportModal'));
     // Set default dates (today)
